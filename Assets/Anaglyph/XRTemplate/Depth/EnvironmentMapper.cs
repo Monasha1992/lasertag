@@ -166,11 +166,11 @@ namespace Anaglyph.XRTemplate
 
 					if (!DepthKitDriver.DepthAvailable) continue;
 
-					if (frustumVolume == null) Setup();
+					// LOCAL TSDF DISABLED — offloaded to remote CUDA server
+					// if (frustumVolume == null) Setup();
+					// ApplyScan();
 
-					ApplyScan();
-
-					Updated.Invoke();
+					Updated.Invoke(); // still fires so RemoteProcessorClient sends depth frames
 				}
 			}
 			catch (OperationCanceledException _)

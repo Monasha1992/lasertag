@@ -69,6 +69,16 @@ void ConvertDepth(uint2 id : SV_DispatchThreadID)
 	agDepthReadback[id] = agDepthTex[uint3(id, 0)];
 }
 
+#pragma kernel ConvertDepthFloat
+
+RWTexture2D<float> agDepthReadbackFloat;
+
+[numthreads(8, 8, 1)]
+void ConvertDepthFloat(uint2 id : SV_DispatchThreadID)
+{
+	agDepthReadbackFloat[id] = agDepthTex[uint3(id, 0)];
+}
+
 //#pragma kernel ConvertRGBA32toR8
 
 //Texture2D<float4> rgbaTex;

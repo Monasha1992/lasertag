@@ -43,6 +43,7 @@ namespace Anaglyph.XRTemplate.DepthKit
 		public static readonly int viewInvID = ID("agDepthViewInv");
 
 		public static readonly int inputRawMonoDepthID = ID("inputRawMonoDepth");
+		public static readonly int rwDepthReadbackFloatID = ID("agDepthReadbackFloat");
 
 		public static bool DepthAvailable { get; private set; }
 
@@ -50,6 +51,7 @@ namespace Anaglyph.XRTemplate.DepthKit
 
 		private ComputeKernel monoRawDepthConvert;
 		private ComputeKernel normKernel;
+		private ComputeKernel convertDepthFloatKernel;
 
 		private Camera mainCam;
 
@@ -57,6 +59,10 @@ namespace Anaglyph.XRTemplate.DepthKit
 		public Texture DepthTex => depthTex;
 		[SerializeField] private RenderTexture normTex;
 		public RenderTexture NormTex => normTex;
+
+		// CPU-readable copy of depth (float, eye 0 only) — used by RemoteProcessorClient
+		private RenderTexture depthReadbackTex;
+		public RenderTexture DepthReadbackTex => depthReadbackTex;
 
 		private RenderTexture simulatedDepthTex;
 
@@ -78,6 +84,7 @@ namespace Anaglyph.XRTemplate.DepthKit
 
 			normKernel = new ComputeKernel(depthNormalCompute, "DepthNorm");
 			monoRawDepthConvert = new ComputeKernel(depthNormalCompute, "MonoRawDepthToStereo");
+			convertDepthFloatKernel = new ComputeKernel(depthNormalCompute, "ConvertDepthFloat");
 
 			arOcclusionManager.frameReceived += OnDepthFrame;
 		}
@@ -196,6 +203,20 @@ namespace Anaglyph.XRTemplate.DepthKit
 			normKernel.Set(rwNormTexID, normTex);
 			normKernel.DispatchFit(normTex);
 			Shader.SetGlobalTexture(normTexID, normTex);
+
+			// Copy depth (eye 0) into a float RenderTexture for AsyncGPUReadback
+			if (depthReadbackTex == null || depthReadbackTex.width != depthTex.width || depthReadbackTex.height != depthTex.height)
+			{
+				depthReadbackTex?.Release();
+				depthReadbackTex = new RenderTexture(depthTex.width, depthTex.height, 0, GraphicsFormat.R32_SFloat)
+				{
+					enableRandomWrite = true
+				};
+				depthReadbackTex.Create();
+			}
+			convertDepthFloatKernel.Set(depthTexID, depthTex);
+			convertDepthFloatKernel.Set(rwDepthReadbackFloatID, depthReadbackTex);
+			convertDepthFloatKernel.DispatchFit(depthReadbackTex);
 
 			Updated.Invoke();
 		}

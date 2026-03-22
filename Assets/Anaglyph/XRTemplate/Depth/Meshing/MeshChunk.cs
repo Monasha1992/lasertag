@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Anaglyph.XRTemplate;
+using Anaglyph.XRTemplate.Remote;
 using Meshia.MeshSimplification;
 using Unity.Burst;
 using Unity.Collections;
@@ -87,6 +88,53 @@ namespace Anaglyph.DepthKit.Meshing
 		}
 
 		public async Task Mesh(CancellationToken ctkn = default)
+		{
+			// LOCAL MESHING DISABLED — remote CUDA server only (re-enable fallback for production)
+			if (RemoteProcessorClient.Instance != null && RemoteProcessorClient.Instance.IsConnected)
+			{
+				await MeshRemote(ctkn);
+				return;
+			}
+
+			// await MeshLocal(ctkn);
+			Debug.LogWarning("[MeshChunk] Remote server not connected — local meshing is disabled.");
+		}
+
+		private async Task<bool> MeshRemote(CancellationToken ctkn)
+		{
+			try
+			{
+				RemoteProcessorClient.MeshData data =
+					await RemoteProcessorClient.Instance.RequestMeshAsync(
+						transform.position, extents, ctkn);
+
+				if (data == null || data.Vertices.Length < 3)
+					return false;
+
+				mesh.Clear();
+				mesh.SetVertices(data.Vertices);
+				mesh.SetNormals(data.Normals);
+				mesh.SetTriangles(data.Indices, 0);
+				mesh.RecalculateBounds();
+				mesh.MarkModified();
+
+				isPopulated = true;
+				dirty = false;
+				onMeshPopulated.Invoke(mesh);
+				return true;
+			}
+			catch (OperationCanceledException)
+			{
+				throw;
+			}
+			catch (Exception e)
+			{
+				Debug.LogWarning($"[MeshChunk] Remote mesh failed, falling back to local: {e.Message}");
+				return false;
+			}
+		}
+
+		private async Task MeshLocal(CancellationToken ctkn = default)
 		{
 			try
 			{

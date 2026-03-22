@@ -171,7 +171,7 @@ PlayerSettings:
   androidMaxAspectRatio: 2.1
   androidMinAspectRatio: 1
   applicationIdentifier:
-    Android: com.monasha.lasertag
+    Android: com.monasha.lasertag_edge
     Standalone: com.Purdue-Envision-Center.Radiation-Survey-Meter
   buildNumber:
     Standalone: 0
