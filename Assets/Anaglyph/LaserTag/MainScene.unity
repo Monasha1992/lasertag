@@ -245,6 +245,101 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 6f643e8c0126ffc46b58e6cbae23abd0, type: 3}
+--- !u!1 &297291702
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 297291707}
+  - component: {fileID: 297291706}
+  - component: {fileID: 297291705}
+  - component: {fileID: 297291704}
+  - component: {fileID: 297291703}
+  m_Layer: 0
+  m_Name: EdgeServer
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &297291703
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 297291702}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0d87d71dbecad44efb09af254bdab3d5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Anaglyph.EdgeServer::Anaglyph.EdgeServer.NetworkMeshApplier
+  client: {fileID: 297291705}
+  chunkMaterial: {fileID: 2100000, guid: 828c90857d65740bdb3cf0d4567fae48, type: 2}
+--- !u!114 &297291704
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 297291702}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8b39c281053014b029557bb7c96c9940, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Anaglyph.EdgeServer::Anaglyph.EdgeServer.DepthFrameSender
+  settings: {fileID: 11400000, guid: 8ace7529506194bfb9f99e025d3b51e0, type: 2}
+  client: {fileID: 297291705}
+  depthCaptureCompute: {fileID: 7200000, guid: 560ab1b5bd5cf4f0887a2e815f5f9f47, type: 3}
+--- !u!114 &297291705
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 297291702}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 661d2ff61076a4dc6b6f79d10cb827d8, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Anaglyph.EdgeServer::Anaglyph.EdgeServer.EdgeClient
+  settings: {fileID: 11400000, guid: 8ace7529506194bfb9f99e025d3b51e0, type: 2}
+--- !u!114 &297291706
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 297291702}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1faf3d9042b3c493e876df4248d9acd9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Anaglyph.EdgeServer::Anaglyph.EdgeServer.EdgeModeController
+  settings: {fileID: 11400000, guid: 8ace7529506194bfb9f99e025d3b51e0, type: 2}
+  environmentMapper: {fileID: 176498960288544577, guid: 273bd9666001ba74c97ca436668c4657, type: 3}
+  chunkManager: {fileID: 1797728588}
+  edgeClient: {fileID: 297291705}
+  depthSender: {fileID: 297291704}
+  meshApplier: {fileID: 297291703}
+--- !u!4 &297291707
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 297291702}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -0, y: -0, z: -0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1073295467
 GameObject:
   m_ObjectHideFlags: 0
@@ -729,3 +824,4 @@ SceneRoots:
   - {fileID: 1797728587}
   - {fileID: 1716785332}
   - {fileID: 1073295471}
+  - {fileID: 297291707}

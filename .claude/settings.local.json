@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /Users/mnsh-dev/Documents/Uni/Thesis/prototypes/lasertag/Assets/Anaglyph/LaserTag -name \"*.cs\" -exec grep -l \"Physics\\\\|Collider\\\\|Rigidbody\" {})",
+      "WebSearch",
+      "WebFetch(domain:www.asus.com)",
+      "WebFetch(domain:dlcdnets.asus.com)",
+      "Bash(swift build:*)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(timeout 3 .build/debug/EdgeMetalServer --port=19555)",
+      "Bash(grep -E \"\\\\.cs$\")"
+    ]
+  }
+}

@@ -1,0 +1,40 @@
+// ── DepthCapture.compute ──────────────────────────────────────────────────────
+// Copies one slice of the external stereo depth Texture2DArray into a writable
+// R32Float RenderTexture that AsyncGPUReadback can read.
+//
+// Why: The external Android HW-buffer texture that Meta Quest 3 provides for
+// depth has format 'None' from Unity's perspective, so AsyncGPUReadback.Request
+// fails on it directly.  Compute shaders CAN sample it (the existing DepthNorm
+// kernel does the same), so we stage through two R32Float targets and then
+// readback those instead.
+//
+// Depth values are in [0, 1] (R16Unorm sampled as float).  Writing them as
+// float32 to the staging texture preserves full precision and simplifies the
+// server-side upload (no UInt16→float conversion needed).
+
+#pragma kernel CaptureSlice0
+#pragma kernel CaptureSlice1
+
+// Bound by DepthFrameSender as "agDepthTex" — the global stereo depth array.
+Texture2DArray<float> agDepthTex;
+
+// R32Float RenderTexture, one per kernel dispatch.
+RWTexture2D<float> captureOutput;
+
+[numthreads(8, 8, 1)]
+void CaptureSlice0(uint2 id : SV_DispatchThreadID)
+{
+    uint w, h, elems;
+    agDepthTex.GetDimensions(w, h, elems);
+    if (id.x >= w || id.y >= h) return;
+    captureOutput[id] = agDepthTex[uint3(id, 0)].r;
+}
+
+[numthreads(8, 8, 1)]
+void CaptureSlice1(uint2 id : SV_DispatchThreadID)
+{
+    uint w, h, elems;
+    agDepthTex.GetDimensions(w, h, elems);
+    if (id.x >= w || id.y >= h) return;
+    captureOutput[id] = agDepthTex[uint3(id, 1)].r;
+}
