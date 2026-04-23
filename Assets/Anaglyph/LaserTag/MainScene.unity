@@ -358,6 +358,8 @@ GameObject:
   m_Component:
   - component: {fileID: 1208629356}
   - component: {fileID: 1208629355}
+  - component: {fileID: 1208629358}
+  - component: {fileID: 1208629357}
   m_Layer: 0
   m_Name: EdgeServerManager
   m_TagString: Untagged
@@ -379,9 +381,14 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Monasha.EdgeServer.EdgeServerClient
   serverIP: 192.168.50.99
   serverPort: 9876
+  minSendInterval: 0.1
+  posDiscardThreshold: 0.15
+  rotDiscardThreshold: 15
+  colliderUpdateInterval: 3
   depthCopyCompute: {fileID: 7200000, guid: b2f9d502b181345cdb3592db5ee7d784, type: 3}
   voxelWriterCompute: {fileID: 7200000, guid: 802495360475f475d910c9b09eb16fb3, type: 3}
   meshFilter: {fileID: 1674195316}
+  meshCollider: {fileID: 1674195318}
 --- !u!4 &1208629356
 Transform:
   m_ObjectHideFlags: 0
@@ -397,6 +404,33 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1208629357
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1208629354}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e46bcfd9686cc4e98af3db748fabfa76, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Monasha.EdgeServer.MetricsSessionController
+  toggleHotkey: 290
+  autoStartOnPlay: 0
+  sessionIsActive: 0
+--- !u!114 &1208629358
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1208629354}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1281707e7f3644e02bba64ce22b17e2c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Monasha.EdgeServer.MetricsLogger
 --- !u!1 &1322057765
 GameObject:
   m_ObjectHideFlags: 0
@@ -535,6 +569,7 @@ GameObject:
   - component: {fileID: 1674195317}
   - component: {fileID: 1674195316}
   - component: {fileID: 1674195315}
+  - component: {fileID: 1674195318}
   m_Layer: 0
   m_Name: EdgeMesh
   m_TagString: Untagged
@@ -614,6 +649,28 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!64 &1674195318
+MeshCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1674195314}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 5
+  m_Convex: 0
+  m_CookingOptions: 30
+  m_Mesh: {fileID: 0}
 --- !u!1 &1716785328
 GameObject:
   m_ObjectHideFlags: 0
