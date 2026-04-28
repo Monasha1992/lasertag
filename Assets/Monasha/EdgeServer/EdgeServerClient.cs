@@ -10,6 +10,10 @@ using Anaglyph;
 using Anaglyph.XRTemplate;
 using Anaglyph.XRTemplate.DepthKit;
 using UnityEngine.Rendering;
+// Alias for the static class Anaglyph.Anaglyph.
+// The class name collides with its own namespace — without this alias, a bare
+// `Anaglyph.DebugMode` resolves to the namespace and fails to find DebugMode.
+using AnaglyphCore = Anaglyph.Anaglyph;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EdgeServerClient.cs — The Quest-side client that communicates with the Mac edge server
@@ -329,9 +333,9 @@ namespace Monasha.EdgeServer
             if (meshRenderer != null)
             {
                 // Initial visibility mirrors the current debug-mode state.
-                meshRenderer.enabled = Anaglyph.DebugMode;
+                meshRenderer.enabled = AnaglyphCore.DebugMode;
                 // Live updates when the user toggles the debug button in the UI.
-                Anaglyph.DebugModeChanged += OnDebugModeChanged;
+                AnaglyphCore.DebugModeChanged += OnDebugModeChanged;
             }
 
             // Match the MeshCollider's cooking options to the ones we'll bake with.
@@ -989,7 +993,7 @@ namespace Monasha.EdgeServer
         {
             // Unsubscribe from the debug-mode event so we don't leak a handler
             // across scene reloads / domain reloads.
-            Anaglyph.DebugModeChanged -= OnDebugModeChanged;
+            AnaglyphCore.DebugModeChanged -= OnDebugModeChanged;
 
             // Signal the reader thread to exit. Closing the stream will unblock
             // any in-progress Read() by throwing — the reader's catch handles it.
