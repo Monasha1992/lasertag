@@ -126,11 +126,22 @@ namespace Monasha.EdgeServer
                  "profiles when firing at 10 Hz.")]
         [SerializeField] private bool verboseLogging = false;
 
+        [Header("Connection error UI")]
+        [Tooltip("Optional GameObject (typically a world-space Canvas with a 'Server not connected' " +
+                 "label) that is activated whenever the edge server is unreachable and deactivated " +
+                 "once a connection is established. The on-device meshing path is intentionally NOT " +
+                 "used as a fallback — if the Mac server isn't running, the user sees this banner. " +
+                 "Leave null to rely on console logs only.")]
+        [SerializeField] private GameObject disconnectedErrorUI;
+
         // ── Public state for gameplay / UI coordination ──────────────────────
         // Other scripts (e.g. a "waiting for mesh" UI, or a script that disables
         // firing until the room is reconstructed) can subscribe to FirstMeshReceived
         // or poll IsMeshReady.
         public static event Action FirstMeshReceived;
+        // Fires whenever the connection state changes (true = connected, false = disconnected).
+        // Subscribe from UI / gameplay code to react without polling IsConnected each frame.
+        public static event Action<bool> ConnectionStatusChanged;
         public static bool  IsConnected { get; private set; }
         public static bool  IsMeshReady { get; private set; }   // At least one mesh has been applied
         public static long  LastRttMs   { get; private set; }
@@ -167,6 +178,10 @@ namespace Monasha.EdgeServer
         // read on one thread + write on another (we write from Task.Run).
         private Thread readerThread;
         private volatile bool readerShouldStop;
+        // Flipped to true by the reader thread when stream.Read returns 0 / throws.
+        // Update() polls this and treats it as "connection lost" — re-shows the
+        // error banner, logs an error, and restarts the reconnect loop.
+        private volatile bool readerExited;
 
         // Queue of completed payloads ready to be applied on the main thread.
         // Each item's buffer comes from `bufferPool` and must be returned there
@@ -345,6 +360,18 @@ namespace Monasha.EdgeServer
             if (meshCollider != null)
                 meshCollider.cookingOptions = FastCookingOptions;
 
+            // ── Hard-disable the Quest's on-device TSDF integration ───────────
+            // Set BEFORE the first connection attempt so the local mapper is
+            // never running — even if the Mac server is unreachable. The user
+            // explicitly chose edge-only operation; falling back to local
+            // meshing on disconnect would silently give a degraded experience.
+            // Instead, we surface the disconnect via the error banner below.
+            EnvironmentMapper.UseEdgeServer = true;
+
+            // Show the "not connected" banner immediately. ConnectLoop will
+            // hide it once TryConnect succeeds.
+            SetConnectedState(false);
+
             // Subscribe to the depth sensor — fires every time a new depth frame
             // arrives. We subscribe even before connecting; OnDepthUpdated is
             // guarded on `stream != null` so pre-connect frames are dropped.
@@ -360,11 +387,39 @@ namespace Monasha.EdgeServer
         }
 
         // ─────────────────────────────────────────────────────────────────────
+        // SetConnectedState — single place that mutates IsConnected so the UI
+        // banner, public event, and console log stay in sync.
+        //
+        //   connected = true  → hide error banner, fire ConnectionStatusChanged(true)
+        //   connected = false → show error banner, fire ConnectionStatusChanged(false)
+        //
+        // Called from TryConnect on success, from Update() when the reader
+        // thread reports a disconnect, and from Start() to set the initial
+        // "not yet connected" state.
+        // ─────────────────────────────────────────────────────────────────────
+        private void SetConnectedState(bool connected)
+        {
+            // Toggle the error UI even if the boolean state didn't change —
+            // ensures the banner reflects reality after a scene reload.
+            if (disconnectedErrorUI != null)
+                disconnectedErrorUI.SetActive(!connected);
+
+            if (IsConnected == connected) return;
+            IsConnected = connected;
+
+            try { ConnectionStatusChanged?.Invoke(connected); }
+            catch (Exception e) { Debug.LogError($"[EdgeServerClient] ConnectionStatusChanged handler threw: {e}"); }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
         // ConnectLoop — Retries the TCP connection until it succeeds
         //
         // On first failure (Mac not yet running) we keep retrying every
         // `reconnectIntervalSec` so the Quest scene doesn't require the Mac
-        // to be up first. Exits on success or when autoReconnect is disabled.
+        // to be up first. Also re-entered from Update() when the reader thread
+        // reports a mid-session disconnect. Exits on success or when
+        // autoReconnect is disabled — but the disconnected error banner stays
+        // visible so the user knows the system isn't running.
         // ─────────────────────────────────────────────────────────────────────
         private IEnumerator ConnectLoop()
         {
@@ -390,7 +445,9 @@ namespace Monasha.EdgeServer
         }
 
         // Attempts a single TCP connection. Returns true on success and starts
-        // the reader thread. Returns false (and logs) on failure.
+        // the reader thread. Returns false (and logs an error) on failure —
+        // the on-device meshing path is intentionally NOT activated as a
+        // fallback, so the user sees the disconnected banner instead.
         private bool TryConnect()
         {
             try
@@ -398,11 +455,11 @@ namespace Monasha.EdgeServer
                 client = new TcpClient(serverIP, serverPort);
                 stream = client.GetStream();
 
-                // Disable the Quest's own TSDF integration — the Mac handles it
-                EnvironmentMapper.UseEdgeServer = true;
+                // Reset the reader-exit flag from any previous disconnect.
+                readerExited     = false;
+                readerShouldStop = false;
 
                 // Spin up the background reader.
-                readerShouldStop = false;
                 readerThread = new Thread(ReaderLoop)
                 {
                     IsBackground = true,
@@ -410,14 +467,18 @@ namespace Monasha.EdgeServer
                 };
                 readerThread.Start();
 
-                IsConnected = true;
+                SetConnectedState(true);
                 Debug.Log($"[EdgeServerClient] Connected to {serverIP}:{serverPort}");
                 return true;
             }
             catch (Exception e)
             {
-                if (verboseLogging)
-                    Debug.LogWarning($"[EdgeServerClient] Connect failed ({e.Message}) — retry in {reconnectIntervalSec}s");
+                // LogError (not LogWarning) so the failure is visible without
+                // verboseLogging. We don't fall back to on-device meshing —
+                // the user must start the Mac server.
+                Debug.LogError($"[EdgeServerClient] Cannot reach edge server at {serverIP}:{serverPort} — " +
+                               $"start EdgeMetalServer on the Mac. Auto-retry in {reconnectIntervalSec}s. " +
+                               $"({e.Message})");
                 return false;
             }
         }
@@ -435,6 +496,30 @@ namespace Monasha.EdgeServer
             // Update the public mesh-age metric so HUDs / UI can show it live.
             if (lastMeshAppliedTime > 0f)
                 LastMeshAgeSec = Time.realtimeSinceStartup - lastMeshAppliedTime;
+
+            // ── Detect a mid-session disconnect ───────────────────────────────
+            // The reader thread sets `readerExited` when stream.Read returns 0
+            // (peer closed) or throws. We surface that on the main thread:
+            // log an error, show the banner, tear down the dead socket, and
+            // restart the reconnect loop if autoReconnect is on.
+            if (readerExited)
+            {
+                readerExited = false;
+                Debug.LogError("[EdgeServerClient] Lost connection to edge server — restart EdgeMetalServer on the Mac.");
+                SetConnectedState(false);
+
+                try { stream?.Close(); } catch { /* already closed */ }
+                try { client?.Close(); } catch { /* already closed */ }
+                stream = null;
+                client = null;
+
+                // Reset in-flight gating so we don't get stuck waiting for a
+                // mesh that will never arrive.
+                waitingForMesh = false;
+
+                if (autoReconnect)
+                    StartCoroutine(ConnectLoop());
+            }
 
             // ── Poll the async MeshCollider bake ──────────────────────────────
             // If a bake finished on the worker thread, assign sharedMesh here
@@ -522,6 +607,14 @@ namespace Monasha.EdgeServer
             {
                 if (!readerShouldStop)
                     Debug.LogWarning($"[EdgeServerClient] Reader thread exiting: {e.Message}");
+            }
+            finally
+            {
+                // Notify the main thread that the connection is gone. Update()
+                // polls this flag (we can't touch UI/coroutines from here).
+                // Skipped during clean shutdown so OnDestroy doesn't bounce.
+                if (!readerShouldStop)
+                    readerExited = true;
             }
         }
 
@@ -1008,6 +1101,10 @@ namespace Monasha.EdgeServer
                 readerThread.Join(250);
 
             voxelBuffer?.Release();
+            // Re-enable on-device meshing only here, on full teardown (scene
+            // unload / app quit). We deliberately do NOT flip this back to
+            // false on a runtime disconnect — that would silently fall back
+            // to local TSDF integration, defeating the point of edge-only.
             EnvironmentMapper.UseEdgeServer = false;
 
             IsConnected = false;
