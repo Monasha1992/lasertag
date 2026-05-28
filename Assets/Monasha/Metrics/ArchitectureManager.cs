@@ -156,8 +156,15 @@ namespace Monasha.Metrics
             // without rebuilding.
 #if EDGE_BUILD
             mode = ArchitectureMode.Edge;
+            // Auto-default the headsetId if the Inspector left it blank or at
+            // its "quest_A" placeholder. The two rig APKs typically live on
+            // two different headsets, so each build's default ID differs.
+            if (string.IsNullOrEmpty(headsetId) || headsetId == "quest_A")
+                headsetId = "quest_B";
 #elif STANDALONE_BUILD
             mode = ArchitectureMode.Standalone;
+            if (string.IsNullOrEmpty(headsetId))
+                headsetId = "quest_A";
 #endif
             // If neither define is set (typical Editor case), keep the
             // Inspector value as-is.
@@ -179,8 +186,27 @@ namespace Monasha.Metrics
             // EdgeServerClient GameObject is disabled at boot.
             EnvironmentMapper.UseEdgeServer = edge;
 
-            Debug.Log($"[ArchitectureManager] Mode = {mode}, headsetId = {headsetId}, " +
-                      $"environment = {environmentLabel}, network = {networkProfile}");
+            // Multi-line "banner" log so it's easy to spot in `adb logcat` —
+            // the most common confusion in rig sessions is which APK is on
+            // which headset. The banner makes it unmistakable.
+            string defineActive =
+#if EDGE_BUILD
+                "EDGE_BUILD";
+#elif STANDALONE_BUILD
+                "STANDALONE_BUILD";
+#else
+                "(no build define — Inspector value used)";
+#endif
+            Debug.Log(
+                "[ArchitectureManager] ============================================\n" +
+                $"[ArchitectureManager]  Mode             : {mode}\n" +
+                $"[ArchitectureManager]  Build define     : {defineActive}\n" +
+                $"[ArchitectureManager]  Headset ID       : {headsetId}\n" +
+                $"[ArchitectureManager]  Environment      : {environmentLabel}\n" +
+                $"[ArchitectureManager]  Network profile  : {networkProfile}\n" +
+                $"[ArchitectureManager]  Study phase      : {studyPhase}\n" +
+                $"[ArchitectureManager]  Build SHA        : {(string.IsNullOrEmpty(buildSha) ? "(unset)" : buildSha)}\n" +
+                "[ArchitectureManager] ============================================");
         }
 
         private void Start()
