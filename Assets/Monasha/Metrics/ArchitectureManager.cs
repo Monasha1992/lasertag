@@ -43,9 +43,13 @@ namespace Monasha.Metrics
 
         // ── Inspector fields ──────────────────────────────────────────────────
         [Header("Architecture selection")]
-        [Tooltip("Which reconstruction path this build runs. Standalone uses the " +
-                 "Quest's on-device EnvironmentMapper + ChunkManager. Edge sends " +
-                 "depth to a Mac and applies the returned mesh.")]
+        [Tooltip("Editor default mode — used when no scripting define is set " +
+                 "(the typical Editor / Play-mode case). In a real Quest build, " +
+                 "this field is OVERRIDDEN by the EDGE_BUILD scripting define:\n" +
+                 "  • Build Profile with EDGE_BUILD define → runtime mode = Edge\n" +
+                 "  • Build Profile without that define   → runtime mode = Standalone\n" +
+                 "So this Inspector value only matters in the Editor — set it to " +
+                 "whichever mode you're currently iterating on.")]
         [SerializeField] private ArchitectureMode mode = ArchitectureMode.Standalone;
 
         [Header("Per-build identification")]
@@ -139,6 +143,24 @@ namespace Monasha.Metrics
         {
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
+
+            // ── Build-time mode selection via scripting define ────────────────
+            // EDGE_BUILD is added in the Build Profile's Player Settings →
+            // "Additional Scripting Defines" (or via PlayerSettings.SetScriptingDefineSymbols).
+            // It overrides whatever was set in the Inspector so that the two
+            // study APKs (Standalone / Edge) are produced from the SAME scene
+            // and only differ in this one preprocessor symbol.
+            //
+            // In the Editor (where neither symbol is set by default), the
+            // Inspector value is used — useful for iterating on either path
+            // without rebuilding.
+#if EDGE_BUILD
+            mode = ArchitectureMode.Edge;
+#elif STANDALONE_BUILD
+            mode = ArchitectureMode.Standalone;
+#endif
+            // If neither define is set (typical Editor case), keep the
+            // Inspector value as-is.
 
             bool edge = (mode == ArchitectureMode.Edge);
 
