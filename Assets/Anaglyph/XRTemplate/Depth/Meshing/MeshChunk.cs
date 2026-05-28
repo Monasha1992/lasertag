@@ -35,6 +35,12 @@ namespace Anaglyph.DepthKit.Meshing
 		private bool isPopulated = false;
 		public bool IsPopulated => isPopulated;
 
+		// Read-only accessors used by Monasha.Metrics.StandaloneMeshCollector to
+		// sum vert/tri counts across all chunks for the standalone-mode `mesh`
+		// CSV row. Returns 0 when the chunk hasn't been populated yet.
+		public int VertexCount   => isPopulated && mesh != null ? mesh.vertexCount     : 0;
+		public int TriangleCount => isPopulated && mesh != null ? (int)(mesh.GetIndexCount(0) / 3) : 0;
+
 		[FormerlySerializedAs("onMeshFirstPopulated")]
 		public UnityEvent<Mesh> onMeshPopulated = new();
 

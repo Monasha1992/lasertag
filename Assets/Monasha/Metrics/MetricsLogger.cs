@@ -103,6 +103,17 @@ namespace Monasha.Metrics
         private double sumPayloadBytes;
         private double sumResponseBytes;
 
+        // ── Mesh-churn tracking ──────────────────────────────────────────────
+        // After each LogMeshSample, we compare to the previous sample and emit
+        // a `mesh_churn` event row whenever the vert/tri count changed. This
+        // is the "objective visual stability" metric — a mesh whose churn is
+        // 0 frame-after-frame is visually stable; one whose churn fluctuates
+        // is wobbling regardless of what RTT or framerate say.
+        //
+        // -1 means "no prior sample" (suppress churn on the first mesh).
+        private int lastMeshVertCount = -1;
+        private int lastMeshTriCount  = -1;
+
         // ─────────────────────────────────────────────────────────────────────
         // SetSessionMetadata — Fill the per-session identification fields.
         //
@@ -296,6 +307,29 @@ namespace Monasha.Metrics
             sumPayloadBytes += payloadBytes;
             sumResponseBytes += responseBytes;
             if (meshCount % 10 == 0) writer.Flush();
+
+            // ── Mesh churn ────────────────────────────────────────────────
+            // Emit a mesh_churn event row whenever the geometry size changed
+            // from the previous mesh. Skipped on discarded meshes (they have
+            // counts == 0 by convention which would always count as a change)
+            // and on the very first mesh of the session (no prior to diff
+            // against). The payload uses key=value;key=value so the analysis
+            // script can parse it back into pandas columns.
+            if (!discarded && lastMeshVertCount >= 0)
+            {
+                int vDelta = vertexCount   - lastMeshVertCount;
+                int tDelta = triangleCount - lastMeshTriCount;
+                if (vDelta != 0 || tDelta != 0)
+                {
+                    LogEvent("mesh_churn",
+                        $"vdelta={vDelta};tdelta={tDelta};v={vertexCount};t={triangleCount}");
+                }
+            }
+            if (!discarded)
+            {
+                lastMeshVertCount = vertexCount;
+                lastMeshTriCount  = triangleCount;
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────────

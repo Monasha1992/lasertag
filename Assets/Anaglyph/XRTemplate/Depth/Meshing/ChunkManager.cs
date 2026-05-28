@@ -25,6 +25,19 @@ namespace Anaglyph.DepthKit.Meshing
 
 		private readonly Dictionary<int3, MeshChunk> chunks = new();
 
+		// Read-only count + sum accessors used by Monasha.Metrics.StandaloneMeshCollector
+		// to populate the `mesh` CSV row in standalone mode. Iterating the
+		// dictionary at ~5 Hz is cheap (typically <50 chunks alive).
+		public int ChunkCount => chunks.Count;
+		public int TotalVertexCount
+		{
+			get { int t = 0; foreach (var c in chunks.Values) t += c.VertexCount;   return t; }
+		}
+		public int TotalTriangleCount
+		{
+			get { int t = 0; foreach (var c in chunks.Values) t += c.TriangleCount; return t; }
+		}
+
 		private readonly ConcurrentQueue<int3> meshQueue = new();
 		private readonly SemaphoreSlim mesherSemaphore = new(0);
 		private readonly ConcurrentQueue<int3> decimateQueue = new();
