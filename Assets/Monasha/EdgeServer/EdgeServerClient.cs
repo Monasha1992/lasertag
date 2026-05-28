@@ -9,6 +9,7 @@ using Unity.Collections;
 using Anaglyph;
 using Anaglyph.XRTemplate;
 using Anaglyph.XRTemplate.DepthKit;
+using Monasha.Metrics;
 using UnityEngine.Rendering;
 // Alias for the static class Anaglyph.Anaglyph.
 // The class name collides with its own namespace — without this alias, a bare
@@ -407,6 +408,13 @@ namespace Monasha.EdgeServer
             if (IsConnected == connected) return;
             IsConnected = connected;
 
+            // Record the state change as a metrics event so analysis can mark
+            // when the link came up / went down within a session. Useful for
+            // explaining gaps in mesh-row cadence around Wi-Fi blips.
+            MetricsLogger.Instance?.LogEvent(
+                connected ? "edge_connect" : "edge_disconnect",
+                $"{serverIP}:{serverPort}");
+
             try { ConnectionStatusChanged?.Invoke(connected); }
             catch (Exception e) { Debug.LogError($"[EdgeServerClient] ConnectionStatusChanged handler threw: {e}"); }
         }
@@ -738,9 +746,11 @@ namespace Monasha.EdgeServer
             {
                 if (verboseLogging)
                     Debug.Log($"[EdgeServerClient] Mesh discarded — pos drift={posDelta:F3}m rot drift={rotDelta:F1}°");
-                // Log the discard event — vertex/tri count are 0 since no mesh was applied
-                MetricsLogger.Instance?.LogFrame(rttMs, lastPayloadBytesSent, lastResponseBytesRecv,
-                    0, 0, posDelta, rotDelta, discarded: true);
+                // Log the discard event — vertex/tri count are 0 since no mesh was applied.
+                // serverTsMs is the timestamp the Quest stamped at send, echoed back by the Mac;
+                // it lets us join this row to the Mac-side per-stage timing CSV.
+                MetricsLogger.Instance?.LogMeshSample(rttMs, lastPayloadBytesSent, lastResponseBytesRecv,
+                    0, 0, posDelta, rotDelta, discarded: true, serverTsMs: sentTimestampMs);
                 return;
             }
 
@@ -861,9 +871,10 @@ namespace Monasha.EdgeServer
                 catch (Exception e) { Debug.LogError($"[EdgeServerClient] FirstMeshReceived handler threw: {e}"); }
             }
 
-            // Log successful mesh application
-            MetricsLogger.Instance?.LogFrame(rttMs, lastPayloadBytesSent, lastResponseBytesRecv,
-                vertCount, idxCount / 3, posDelta, rotDelta, discarded: false);
+            // Log successful mesh application. serverTsMs is the round-tripped timestamp;
+            // pandas joins on this to the Mac-side CSV for per-stage server timings.
+            MetricsLogger.Instance?.LogMeshSample(rttMs, lastPayloadBytesSent, lastResponseBytesRecv,
+                vertCount, idxCount / 3, posDelta, rotDelta, discarded: false, serverTsMs: sentTimestampMs);
 
             if (verboseLogging)
                 Debug.Log($"[EdgeServerClient] Mesh applied: {vertCount}v {idxCount / 3}t | RTT={rttMs}ms drift={posDelta:F3}m/{rotDelta:F1}°");

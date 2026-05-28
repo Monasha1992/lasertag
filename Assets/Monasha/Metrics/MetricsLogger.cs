@@ -1,0 +1,438 @@
+using System;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using UnityEngine;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MetricsLogger.cs — Multi-sample-type CSV recorder for the thesis study
+//
+// WHAT THIS FILE DOES:
+//   Records metrics to a single CSV file per session, with multiple row types
+//   sharing one schema. Each row's `sample_type` column tells the analysis
+//   script how to parse it. Columns not relevant to a given row type are left
+//   empty (pandas reads them as NaN).
+//
+// HOW TO USE:
+//   1. Add MetricsLogger to a GameObject early in the scene (e.g. on the
+//      ArchitectureManager root). The singleton survives scene reloads.
+//   2. Set session metadata via SetSessionMetadata(...) before StartSession().
+//   3. Call StartSession() to open a new CSV file (auto-named with timestamp).
+//   4. Collectors call LogFrameSample / LogMeshSample / LogSystemSample /
+//      LogOvrSample / LogEvent on the singleton.
+//   5. Call EndSession() to flush and close (also fires on OnApplicationQuit).
+//
+// CSV FORMAT:
+//   One header row, then rows of varying sample types. All rows share the
+//   same column union; unused columns are empty.
+//
+//   Column order (32 columns):
+//     sample_type, session_time_s, wall_ms,
+//     // event-specific
+//     event_name, event_payload,
+//     // frame-specific
+//     frame_time_ms, fps, display_hz,
+//     // mesh-specific
+//     rtt_ms, payload_bytes, response_bytes, vertex_count, triangle_count,
+//     pos_drift_m, rot_drift_deg, discarded, server_ts_ms,
+//     // system-specific (1 Hz)
+//     battery_pct, voltage_mv, current_ma, battery_temp_c, thermal_status,
+//     // ovr-specific (1 Hz)
+//     cpu_level, gpu_level, app_fps, headroom,
+//     // meta-specific (session header)
+//     study_phase, participant_id, headset_id, architecture, environment,
+//     network_profile, build_sha
+//
+// FILE LOCATION:
+//   Application.persistentDataPath / metrics_<UTC-timestamp>.csv
+//   On Quest: /sdcard/Android/data/<package>/files/metrics_*.csv
+//   Pull with:  adb pull /sdcard/Android/data/<package>/files/ ~/Desktop/
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace Monasha.Metrics
+{
+    public enum SampleType { Meta, Frame, Mesh, System, Ovr, Event }
+
+    public class MetricsLogger : MonoBehaviour
+    {
+        // ── Singleton ─────────────────────────────────────────────────────────
+        public static MetricsLogger Instance { get; private set; }
+
+        private void Awake()
+        {
+            if (Instance != null && Instance != this) { Destroy(gameObject); return; }
+            Instance = this;
+            DontDestroyOnLoad(gameObject);
+        }
+
+        // ── State ─────────────────────────────────────────────────────────────
+        private StreamWriter writer;
+        private bool         sessionActive;
+        private float        sessionStartTime;
+        private string       currentFilePath;
+
+        // Buffered StringBuilder for row composition — reused, no per-row alloc
+        private readonly StringBuilder sb = new StringBuilder(512);
+
+        // Public read-only view of session state
+        public bool   IsSessionActive => sessionActive;
+        public string CurrentFilePath => currentFilePath;
+        public int    FrameCount      => frameCount;
+
+        // ── Session metadata (set before StartSession) ────────────────────────
+        // Written into the `meta` row at the top of the CSV and recoverable by
+        // analysis scripts. Defaults are placeholders — set them via
+        // SetSessionMetadata before starting a session.
+        private string studyPhase       = "rig";          // "rig" or "participant"
+        private string participantId    = "";
+        private string headsetId        = "";
+        private string architecture     = "standalone";    // "standalone" or "edge"
+        private string environmentLabel = "unknown";
+        private string networkProfile   = "n/a";
+        private string buildSha         = "";
+
+        // Public accessors so the debug HUD / external code can show current state
+        public string Architecture      => architecture;
+        public string EnvironmentLabel  => environmentLabel;
+        public string ParticipantId     => participantId;
+
+        // ── Rolling totals (printed as summary at session end) ────────────────
+        private int   frameCount;
+        private int   meshCount;
+        private double sumRttMs;
+        private double sumPayloadBytes;
+        private double sumResponseBytes;
+
+        // ─────────────────────────────────────────────────────────────────────
+        // SetSessionMetadata — Fill the per-session identification fields.
+        //
+        // Called by ArchitectureManager and any study-protocol controller.
+        // Safe to call before StartSession (gets written into the meta row) or
+        // mid-session (updates fields for subsequent rows — meta row is only
+        // written once at the start, so changes to studyPhase/participantId
+        // after StartSession won't be reflected in the CSV).
+        // ─────────────────────────────────────────────────────────────────────
+        public void SetSessionMetadata(
+            string studyPhase, string participantId, string headsetId,
+            string architecture, string environmentLabel, string networkProfile,
+            string buildSha)
+        {
+            this.studyPhase       = studyPhase       ?? "";
+            this.participantId    = participantId    ?? "";
+            this.headsetId        = headsetId        ?? "";
+            this.architecture     = architecture     ?? "standalone";
+            this.environmentLabel = environmentLabel ?? "unknown";
+            this.networkProfile   = networkProfile   ?? "n/a";
+            this.buildSha         = buildSha         ?? "";
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // StartSession — Open a new CSV file and write the header + meta row
+        // ─────────────────────────────────────────────────────────────────────
+        public void StartSession()
+        {
+            if (sessionActive)
+            {
+                Debug.LogWarning("[MetricsLogger] Session already active — call EndSession() first");
+                return;
+            }
+
+            string timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+            currentFilePath  = Path.Combine(Application.persistentDataPath, $"metrics_{timestamp}.csv");
+
+            try
+            {
+                writer = new StreamWriter(currentFilePath, append: false, Encoding.UTF8);
+                writer.NewLine = "\n";
+
+                // Single header row — union of all sample-type-specific columns
+                writer.WriteLine(
+                    "sample_type,session_time_s,wall_ms," +
+                    "event_name,event_payload," +
+                    "frame_time_ms,fps,display_hz," +
+                    "rtt_ms,payload_bytes,response_bytes,vertex_count,triangle_count," +
+                    "pos_drift_m,rot_drift_deg,discarded,server_ts_ms," +
+                    "battery_pct,voltage_mv,current_ma,battery_temp_c,thermal_status," +
+                    "cpu_level,gpu_level,app_fps,headroom," +
+                    "study_phase,participant_id,headset_id,architecture,environment," +
+                    "network_profile,build_sha"
+                );
+
+                sessionActive    = true;
+                sessionStartTime = Time.realtimeSinceStartup;
+                frameCount       = 0;
+                meshCount        = 0;
+                sumRttMs         = 0;
+                sumPayloadBytes  = 0;
+                sumResponseBytes = 0;
+
+                // Meta row: snapshot of session identity at the moment recording began.
+                WriteMetaRow();
+
+                writer.Flush();
+
+                Debug.Log($"[MetricsLogger] Session started → {currentFilePath} ({architecture}, {environmentLabel})");
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[MetricsLogger] Failed to open file: {e.Message}");
+                sessionActive = false;
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Internal row writers
+        //
+        // Each LogXxx method composes a CSV row into the shared StringBuilder
+        // then flushes it via writer.WriteLine. Empty cells are commas with no
+        // value between them. Numeric formatting uses InvariantCulture so that
+        // locale-dependent decimal separators don't sneak in (some Quest
+        // locales use ',' as decimal separator, which would corrupt CSV).
+        // ─────────────────────────────────────────────────────────────────────
+
+        private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
+
+        private void BeginRow(string sampleType)
+        {
+            sb.Clear();
+            sb.Append(sampleType).Append(',');
+            sb.Append((Time.realtimeSinceStartup - sessionStartTime).ToString("F3", Inv)).Append(',');
+            sb.Append(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(Inv));
+        }
+
+        // Each subsequent column adds a leading comma. The final WriteLine
+        // appends the newline.
+        private void Col(string s) { sb.Append(',').Append(s ?? ""); }
+        private void Col(int    v) { sb.Append(',').Append(v.ToString(Inv)); }
+        private void Col(long   v) { sb.Append(',').Append(v.ToString(Inv)); }
+        private void Col(float  v) { sb.Append(',').Append(v.ToString("F3", Inv)); }
+        private void Col(double v) { sb.Append(',').Append(v.ToString("F3", Inv)); }
+        private void Col(bool   v) { sb.Append(',').Append(v ? "1" : "0"); }
+        private void EmptyN(int n) { for (int i = 0; i < n; i++) sb.Append(','); }
+
+        // Writes the meta row using current metadata values. Called from StartSession.
+        private void WriteMetaRow()
+        {
+            BeginRow("meta");
+            EmptyN(2);    // event_name, event_payload
+            EmptyN(3);    // frame_time_ms, fps, display_hz
+            EmptyN(9);    // mesh columns (rtt..server_ts_ms)
+            EmptyN(5);    // system columns
+            EmptyN(4);    // ovr columns
+            Col(studyPhase);
+            Col(participantId);
+            Col(headsetId);
+            Col(architecture);
+            Col(environmentLabel);
+            Col(networkProfile);
+            Col(buildSha);
+
+            writer.WriteLine(sb.ToString());
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // LogFrameSample — one row per Unity frame (called from FrameRateCollector)
+        // ─────────────────────────────────────────────────────────────────────
+        public void LogFrameSample(float frameTimeMs, float fps, float displayHz)
+        {
+            if (!sessionActive || writer == null) return;
+
+            BeginRow("frame");
+            EmptyN(2);                           // event cols
+            Col(frameTimeMs);                    // frame_time_ms
+            Col(fps);                            // fps
+            Col(displayHz);                      // display_hz
+            EmptyN(9);                           // mesh cols
+            EmptyN(5);                           // system cols
+            EmptyN(4);                           // ovr cols
+            EmptyN(7);                           // meta cols
+
+            writer.WriteLine(sb.ToString());
+            frameCount++;
+            if (frameCount % 60 == 0) writer.Flush();   // ~once per second at 60 fps
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // LogMeshSample — one row per mesh applied (or discarded).
+        // Edge mode: includes RTT, payload/response bytes, server_ts_ms (echo).
+        // Standalone mode: RTT/bytes/server_ts blank-ish (0), but vertex/triangle
+        //                  counts and discarded flag still populated.
+        // ─────────────────────────────────────────────────────────────────────
+        public void LogMeshSample(
+            long  rttMs,            // 0 in standalone mode
+            int   payloadBytes,     // 0 in standalone mode
+            int   responseBytes,    // 0 in standalone mode
+            int   vertexCount,
+            int   triangleCount,
+            float posDriftM,
+            float rotDriftDeg,
+            bool  discarded,
+            long  serverTsMs = 0    // timestamp echo from Mac; 0 in standalone
+        )
+        {
+            if (!sessionActive || writer == null) return;
+
+            BeginRow("mesh");
+            EmptyN(2);                           // event cols
+            EmptyN(3);                           // frame cols
+            Col(rttMs);                          // rtt_ms
+            Col(payloadBytes);                   // payload_bytes
+            Col(responseBytes);                  // response_bytes
+            Col(vertexCount);                    // vertex_count
+            Col(triangleCount);                  // triangle_count
+            Col(posDriftM);                      // pos_drift_m
+            Col(rotDriftDeg);                    // rot_drift_deg
+            Col(discarded);                      // discarded
+            Col(serverTsMs);                     // server_ts_ms
+            EmptyN(5);                           // system cols
+            EmptyN(4);                           // ovr cols
+            EmptyN(7);                           // meta cols
+
+            writer.WriteLine(sb.ToString());
+
+            // Maintain rolling totals
+            meshCount++;
+            sumRttMs += rttMs;
+            sumPayloadBytes += payloadBytes;
+            sumResponseBytes += responseBytes;
+            if (meshCount % 10 == 0) writer.Flush();
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // LogSystemSample — 1 Hz battery / thermal / voltage / current row.
+        // Called by SystemMetricsCollector. All values pre-converted to the
+        // documented units (mA, mV, ºC, integer thermal status 0-5).
+        // ─────────────────────────────────────────────────────────────────────
+        public void LogSystemSample(
+            int   batteryPct,
+            int   voltageMv,
+            int   currentMa,
+            float batteryTempC,
+            int   thermalStatus
+        )
+        {
+            if (!sessionActive || writer == null) return;
+
+            BeginRow("system");
+            EmptyN(2);                           // event cols
+            EmptyN(3);                           // frame cols
+            EmptyN(9);                           // mesh cols
+            Col(batteryPct);                     // battery_pct
+            Col(voltageMv);                      // voltage_mv
+            Col(currentMa);                      // current_ma
+            Col(batteryTempC);                   // battery_temp_c
+            Col(thermalStatus);                  // thermal_status
+            EmptyN(4);                           // ovr cols
+            EmptyN(7);                           // meta cols
+
+            writer.WriteLine(sb.ToString());
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // LogOvrSample — 1 Hz OVR perf metrics row.
+        // Called by OvrPerfCollector. headroom = 1 - usedFrameTime/budget.
+        // ─────────────────────────────────────────────────────────────────────
+        public void LogOvrSample(int cpuLevel, int gpuLevel, float appFps, float headroom)
+        {
+            if (!sessionActive || writer == null) return;
+
+            BeginRow("ovr");
+            EmptyN(2);                           // event cols
+            EmptyN(3);                           // frame cols
+            EmptyN(9);                           // mesh cols
+            EmptyN(5);                           // system cols
+            Col(cpuLevel);                       // cpu_level
+            Col(gpuLevel);                       // gpu_level
+            Col(appFps);                         // app_fps
+            Col(headroom);                       // headroom
+            EmptyN(7);                           // meta cols
+
+            writer.WriteLine(sb.ToString());
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // LogEvent — async/event-driven row (game events, connect/disconnect,
+        // throttling transitions, study annotations).
+        //
+        // `payload` may contain ad-hoc detail; commas and double quotes are
+        // sanitised to keep the CSV well-formed. For complex payloads, prefer
+        // key=value;key=value format (the analysis script can parse it back).
+        // ─────────────────────────────────────────────────────────────────────
+        public void LogEvent(string name, string payload = "")
+        {
+            if (!sessionActive || writer == null) return;
+
+            // Sanitise commas/quotes to avoid breaking CSV parsing
+            string safeName    = name?.Replace(",", ";").Replace("\"", "'") ?? "";
+            string safePayload = payload?.Replace(",", ";").Replace("\"", "'") ?? "";
+
+            BeginRow("event");
+            Col(safeName);                       // event_name
+            Col(safePayload);                    // event_payload
+            EmptyN(3);                           // frame cols
+            EmptyN(9);                           // mesh cols
+            EmptyN(5);                           // system cols
+            EmptyN(4);                           // ovr cols
+            EmptyN(7);                           // meta cols
+
+            writer.WriteLine(sb.ToString());
+            writer.Flush();      // events are rare → always flush immediately
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // EndSession — Flush, print summary, close file
+        // ─────────────────────────────────────────────────────────────────────
+        public void EndSession()
+        {
+            if (!sessionActive || writer == null) return;
+
+            writer.Flush();
+            writer.Close();
+            writer        = null;
+            sessionActive = false;
+
+            if (meshCount > 0)
+            {
+                Debug.Log(
+                    $"[MetricsLogger] Session ended — {frameCount} frames, {meshCount} meshes\n" +
+                    $"  Avg RTT:           {sumRttMs / meshCount:F1} ms\n" +
+                    $"  Avg payload sent:  {sumPayloadBytes / meshCount:F0} bytes\n" +
+                    $"  Avg response recv: {sumResponseBytes / meshCount:F0} bytes\n" +
+                    $"  File: {currentFilePath}"
+                );
+            }
+            else
+            {
+                Debug.Log($"[MetricsLogger] Session ended — {frameCount} frames, no meshes.\n  File: {currentFilePath}");
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // LogFrame — DEPRECATED back-compat alias for EdgeServerClient's
+        // existing call site. Forwards to LogMeshSample. Remove once
+        // EdgeServerClient is updated to call LogMeshSample directly.
+        // ─────────────────────────────────────────────────────────────────────
+        [Obsolete("Use LogMeshSample. Kept for backwards compatibility during refactor.")]
+        public void LogFrame(
+            long  rttMs,
+            int   payloadBytes,
+            int   responseBytes,
+            int   vertexCount,
+            int   triangleCount,
+            float posDriftM,
+            float rotDriftDeg,
+            bool  discarded
+        ) => LogMeshSample(rttMs, payloadBytes, responseBytes, vertexCount, triangleCount,
+                           posDriftM, rotDriftDeg, discarded, 0);
+
+        private void OnDestroy()
+        {
+            if (sessionActive) EndSession();
+        }
+
+        private void OnApplicationQuit()
+        {
+            if (sessionActive) EndSession();
+        }
+    }
+}

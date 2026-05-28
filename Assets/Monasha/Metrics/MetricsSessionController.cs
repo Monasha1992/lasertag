@@ -34,7 +34,7 @@ using UnityEngine;
 //     adb pull /sdcard/Android/data/<package>/files/edge_metrics_<ts>.csv
 // ─────────────────────────────────────────────────────────────────────────────
 
-namespace Monasha.EdgeServer
+namespace Monasha.Metrics
 {
     public class MetricsSessionController : MonoBehaviour
     {

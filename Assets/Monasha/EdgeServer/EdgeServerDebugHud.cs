@@ -1,5 +1,6 @@
 using UnityEngine;
 using TMPro;
+using Monasha.Metrics;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EdgeServerDebugHud.cs — Live on-screen metrics for the edge-server pipeline
