@@ -979,7 +979,7 @@ GameObject:
   - component: {fileID: 1674195316}
   - component: {fileID: 1674195315}
   - component: {fileID: 1674195318}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: EdgeMesh
   m_TagString: Untagged
   m_Icon: {fileID: 0}

@@ -48,31 +48,50 @@ namespace Monasha.Metrics
         // Cached at first use; refreshed if null (handles late-spawn rig prefab).
         private ChunkManager chunkManager;
 
+        // The EnvironmentMapper instance we actually subscribed to. Kept so
+        // OnDisable unsubscribes from the same object we subscribed to, even
+        // if the static Instance was replaced by a rig respawn in between.
+        private EnvironmentMapper subscribedMapper;
+
         private void OnEnable()
         {
-            // Subscribe to the local TSDF integration completion event.
-            // The handler is safe even before EnvironmentMapper.Instance is
-            // set — it'll just early-return on the null check below.
-            if (EnvironmentMapper.Instance != null)
-                EnvironmentMapper.Instance.Updated += OnEnvironmentUpdated;
+            // EnvironmentMapper lives inside the XR rig prefab, which
+            // CameraRigSpawner instantiates at runtime — possibly AFTER this
+            // component's OnEnable/Start. A one-shot subscription attempt here
+            // would silently fail and we'd record zero standalone mesh rows
+            // for the whole session. Instead, poll until the mapper exists.
+            StartCoroutine(SubscribeWhenMapperReady());
         }
 
-        private void Start()
+        private System.Collections.IEnumerator SubscribeWhenMapperReady()
         {
-            // Late-bind in case EnvironmentMapper.Instance wasn't ready at OnEnable
-            // (which happens when this script Awake's BEFORE the runtime-spawned
-            // rig has finished initialising).
-            if (EnvironmentMapper.Instance != null)
+            // Poll every 0.5 s. The rig typically spawns within the first
+            // couple of seconds; the loop also re-binds if the rig is
+            // destroyed and respawned mid-session (Instance changes).
+            var wait = new WaitForSecondsRealtime(0.5f);
+            while (enabled)
             {
-                EnvironmentMapper.Instance.Updated -= OnEnvironmentUpdated;
-                EnvironmentMapper.Instance.Updated += OnEnvironmentUpdated;
+                var mapper = EnvironmentMapper.Instance;
+                if (mapper != null && mapper != subscribedMapper)
+                {
+                    if (subscribedMapper != null)
+                        subscribedMapper.Updated -= OnEnvironmentUpdated;
+
+                    mapper.Updated += OnEnvironmentUpdated;
+                    subscribedMapper = mapper;
+                    Debug.Log("[StandaloneMeshCollector] Subscribed to EnvironmentMapper.Updated");
+                }
+                yield return wait;
             }
         }
 
         private void OnDisable()
         {
-            if (EnvironmentMapper.Instance != null)
-                EnvironmentMapper.Instance.Updated -= OnEnvironmentUpdated;
+            if (subscribedMapper != null)
+            {
+                subscribedMapper.Updated -= OnEnvironmentUpdated;
+                subscribedMapper = null;
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────────
