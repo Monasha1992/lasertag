@@ -941,7 +941,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ea161e2d49f5148a3bc2434183e63edc, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.ArchitectureManager
-  mode: 1
+  mode: 0
   headsetId: quest_B
   environmentLabel: unknown
   buildSha: 
@@ -1235,7 +1235,7 @@ MonoBehaviour:
   chunkPrefab: {fileID: 5707654171926711959, guid: ebe1cd8f705d4ab4abc5b9f1778d536d, type: 3}
   numMeshWorkers: 3
   numDecimateWorkers: 1
-  updateDistance: 3
+  updateDistance: 6
 --- !u!1 &1881734007
 GameObject:
   m_ObjectHideFlags: 0

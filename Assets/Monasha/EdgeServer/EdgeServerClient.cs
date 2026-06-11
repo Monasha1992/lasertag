@@ -35,13 +35,23 @@ using AnaglyphCore = Anaglyph.Anaglyph;
 //     [540 bytes frame data]          ← matrices + volume config
 //     [width×height×4 bytes]          ← raw float32 depth pixels
 //
-//   Incoming (Mac → Quest):
+//   Incoming (Mac → Quest), type 0x03 — legacy single global mesh:
 //     [0x03][len3][len2][len1][len0]  ← 5-byte header
 //     [8 bytes timestamp echo]        ← same timestamp we sent (RTT = now - echo)
 //     [4 bytes vertCount]
 //     [4 bytes idxCount]
 //     [vertCount×24 bytes vertices]   ← pos.xyz + normal.xyz per vertex
 //     [idxCount×4 bytes indices]      ← uint32 triangle indices
+//
+//   Incoming (Mac → Quest), type 0x04 — chunk batch (persistent cache):
+//     [0x04][len3][len2][len1][len0]  ← 5-byte header
+//     [8 bytes timestamp echo]
+//     [4 bytes chunkCount]
+//     then per chunk: [12 B grid coord (3×int32)][4 B vertCount][4 B idxCount]
+//                     [vertices][indices]   (vertCount 0 = clear that cell)
+//     Routed to EdgeChunkStore — chunks persist client-side like the
+//     standalone path's ChunkManager. Which type the server sends is its
+//     useChunkedMeshing flag; this client handles both.
 //
 // FLOW CONTROL:
 //   waitingForMesh  — true once a frame is sent; blocks sending until Mac responds
@@ -228,6 +238,15 @@ namespace Monasha.EdgeServer
         [SerializeField] private Renderer     meshRenderer;
         private Mesh receivedMesh;
         private int  meshesReceived = 0; // Counter used to throttle MeshCollider updates
+
+        // ── Chunk store (0x04 persistent-chunk protocol) ──────────────────────
+        // Created lazily on the meshFilter's GameObject when the first chunk
+        // batch arrives. Holds the dictionary of cached chunk meshes that gives
+        // edge mode standalone-style persistence — geometry stays on screen
+        // when the camera looks away. The legacy single-mesh path (0x03) and
+        // this path coexist; which one runs is decided by the SERVER's
+        // useChunkedMeshing flag (the client just handles whatever arrives).
+        private EdgeChunkStore chunkStore;
 
         // ── Mesh buffer size tracking ─────────────────────────────────────────
         // SetVertexBufferParams / SetIndexBufferParams reallocate the GPU buffer
@@ -556,6 +575,7 @@ namespace Monasha.EdgeServer
                 try
                 {
                     if (item.type == 0x03)      ApplyMeshData(item.buffer);
+                    else if (item.type == 0x04) ApplyChunkBatch(item.buffer, item.length);
                     else if (item.type == 0x02) ApplyVoxelData(item.buffer);
                 }
                 finally
@@ -878,6 +898,104 @@ namespace Monasha.EdgeServer
 
             if (verboseLogging)
                 Debug.Log($"[EdgeServerClient] Mesh applied: {vertCount}v {idxCount / 3}t | RTT={rttMs}ms drift={posDelta:F3}m/{rotDelta:F1}°");
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // ApplyChunkBatch — Parses a 0x04 chunk-batch payload and routes each
+        // chunk into the EdgeChunkStore (the persistent client-side cache).
+        //
+        // PAYLOAD LAYOUT (see docs/04-protocol.md):
+        //   Bytes 0–7  : uint64 timestamp echo → RTT
+        //   Bytes 8–11 : uint32 chunkCount
+        //   Then per chunk:
+        //     12 B chunk grid coord (3 × int32)
+        //     4 B vertCount, 4 B idxCount
+        //     vertCount × 24 B vertices, idxCount × 4 B indices
+        //   vertCount == 0 → "this grid cell is now empty" (store clears it).
+        //
+        // NO POSE DISCARD:
+        //   Unlike the legacy global mesh, chunks are world-anchored grid
+        //   cells — a chunk that arrives late is still spatially correct, so
+        //   head motion during the round trip doesn't invalidate it. Drift is
+        //   still computed and logged for the metrics, but nothing is dropped.
+        // ─────────────────────────────────────────────────────────────────────
+        private void ApplyChunkBatch(byte[] data, int length)
+        {
+            waitingForMesh = false;
+
+            int offset = 0;
+
+            // ── Timestamp echo → RTT ──────────────────────────────────────────
+            long sentTimestampMs = (long)BitConverter.ToUInt64(data, offset);
+            offset += 8;
+            long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            long rttMs = nowMs - sentTimestampMs;
+            lastResponseBytesRecv = length + 5; // actual payload + framing header
+
+            // Pose drift — metrics only, never a discard (see header comment).
+            Vector3    nowPos = headTransform != null ? headTransform.position : Vector3.zero;
+            Quaternion nowRot = headTransform != null ? headTransform.rotation : Quaternion.identity;
+            float posDelta = Vector3.Distance(nowPos, sentHeadPos);
+            float rotDelta = Quaternion.Angle(nowRot, sentHeadRot);
+
+            int chunkCount = (int)BitConverter.ToUInt32(data, offset);
+            offset += 4;
+
+            // ── Lazily create the chunk store on the EdgeMesh GameObject ──────
+            // Auto-added so no manual Inspector wiring is needed; it inherits
+            // the EdgeMesh's layer (Chunk, 6) and material for its children.
+            if (chunkStore == null && meshFilter != null)
+            {
+                chunkStore = meshFilter.GetComponent<EdgeChunkStore>();
+                if (chunkStore == null)
+                    chunkStore = meshFilter.gameObject.AddComponent<EdgeChunkStore>();
+            }
+            if (chunkStore == null) return;   // no meshFilter assigned — nowhere to put chunks
+
+            // ── Route each chunk into the store ───────────────────────────────
+            int batchVerts = 0, batchTris = 0;
+            for (int i = 0; i < chunkCount; i++)
+            {
+                int cx = BitConverter.ToInt32(data, offset); offset += 4;
+                int cy = BitConverter.ToInt32(data, offset); offset += 4;
+                int cz = BitConverter.ToInt32(data, offset); offset += 4;
+                int chunkVerts = (int)BitConverter.ToUInt32(data, offset); offset += 4;
+                int chunkIdx   = (int)BitConverter.ToUInt32(data, offset); offset += 4;
+
+                int vertexBytes = chunkVerts * 24;
+                int indexBytes  = chunkIdx * 4;
+
+                chunkStore.ApplyChunk(new Vector3Int(cx, cy, cz), data,
+                    vertStart:  offset,               vertCount: chunkVerts,
+                    indexStart: offset + vertexBytes, idxCount:  chunkIdx);
+
+                offset += vertexBytes + indexBytes;
+                batchVerts += chunkVerts;
+                batchTris  += chunkIdx / 3;
+            }
+
+            // ── Public state + first-mesh event ───────────────────────────────
+            // Vertex/triangle totals reflect the WHOLE cached room, not just
+            // this batch — that's the number a HUD or gameplay gate cares about.
+            LastRttMs           = rttMs;
+            LastVertexCount     = chunkStore.TotalVertexCount;
+            LastTriangleCount   = chunkStore.TotalTriangleCount;
+            lastMeshAppliedTime = Time.realtimeSinceStartup;
+
+            if (!IsMeshReady && batchVerts > 0)
+            {
+                IsMeshReady = true;
+                try { FirstMeshReceived?.Invoke(); }
+                catch (Exception e) { Debug.LogError($"[EdgeServerClient] FirstMeshReceived handler threw: {e}"); }
+            }
+
+            // Metrics row: per-batch sums (what this round trip delivered).
+            MetricsLogger.Instance?.LogMeshSample(rttMs, lastPayloadBytesSent, lastResponseBytesRecv,
+                batchVerts, batchTris, posDelta, rotDelta, discarded: false, serverTsMs: sentTimestampMs);
+
+            if (verboseLogging)
+                Debug.Log($"[EdgeServerClient] Chunk batch: {chunkCount} chunks {batchVerts}v {batchTris}t | " +
+                          $"RTT={rttMs}ms | cached room total {chunkStore.TotalVertexCount}v ({chunkStore.ChunkCount} chunks)");
         }
 
         // ─────────────────────────────────────────────────────────────────────
