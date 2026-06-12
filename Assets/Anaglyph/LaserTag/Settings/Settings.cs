@@ -20,6 +20,8 @@ namespace Anaglyph.Lasertag
 
 		private void Start()
 		{
+			drawScanMesh.Value = true;
+
 			aprilTagColocation.AddChangeListenerAndCheck(b =>
 			{
 				if (b)

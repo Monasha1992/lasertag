@@ -39,8 +39,8 @@ using AnaglyphCore = Anaglyph.Anaglyph;
 //   chunk — chunks are small).
 //
 // DEBUG VISIBILITY:
-//   Chunk renderers follow the Anaglyph debug-mode toggle, same as the
-//   legacy EdgeMesh renderer: visible only when DebugMode is on.
+//   Chunk renderers are on the "Chunk" layer. Visibility is driven by the
+//   Camera Culling Mask (typically via the "Show Mesh" setting).
 // ─────────────────────────────────────────────────────────────────────────────
 
 namespace Monasha.EdgeServer
@@ -64,8 +64,18 @@ namespace Monasha.EdgeServer
 
             // Size guards so SetVertexBufferParams (a GPU realloc) only runs
             // when this buffer's capacity actually changed.
-            public int[] lastVertCount = { -1, -1 };
-            public int[] lastIdxCount  = { -1, -1 };
+            // Declared GPU buffer capacity per buffer (pow2, grow-only).
+            // SetVertexBufferParams is a GPU reallocation — calling it only
+            // when the pow2 capacity grows (instead of on every size change)
+            // removes ~80 reallocs/sec that caused hitches on Adreno.
+            public int[] capVerts = { 0, 0 };
+            public int[] capIdx   = { 0, 0 };
+
+            // Actual in-use counts per buffer. mesh.vertexCount now equals
+            // the DECLARED capacity (bigger than used), so totals must come
+            // from these, not from the Mesh object.
+            public int[] actualVerts = { 0, 0 };
+            public int[] actualTris  = { 0, 0 };
 
             public bool  hasGeometry;          // false once cleared (vertCount == 0)
             public bool  rebakeQueued;         // arrived while its bake was in flight
@@ -75,6 +85,14 @@ namespace Monasha.EdgeServer
 
         // Chunks waiting for a collider bake, FIFO. One bake task in flight.
         private readonly Queue<ChunkEntry> bakeQueue = new();
+        [Tooltip("Minimum seconds between collider-bake starts across all chunks. " +
+                 "Caps PhysX cook + sharedMesh-assign traffic (each assign costs " +
+                 "main-thread time): 0.05 = at most 20 collider updates/sec. The " +
+                 "first implementation re-baked every arriving chunk (~80/sec) " +
+                 "which caused the freezes. Visual meshes still update at full " +
+                 "rate; only collider refresh is throttled.")]
+        [SerializeField] private float minBakeIntervalSec = 0.05f;
+        private float lastBakeStartTime = -999f;
         private Task bakeTask;
         private ChunkEntry bakingEntry;
 
@@ -111,28 +129,15 @@ namespace Monasha.EdgeServer
         // Template material taken from the EdgeMesh GameObject's own renderer
         // (this component is added to that GameObject by EdgeServerClient).
         private Material chunkMaterial;
-        private bool     visible;
 
         private void Awake()
         {
             var ownRenderer = GetComponent<MeshRenderer>();
             chunkMaterial = ownRenderer != null ? ownRenderer.sharedMaterial : null;
-
-            visible = AnaglyphCore.DebugMode;
-            AnaglyphCore.DebugModeChanged += OnDebugModeChanged;
         }
 
         private void OnDestroy()
         {
-            AnaglyphCore.DebugModeChanged -= OnDebugModeChanged;
-        }
-
-        private void OnDebugModeChanged(bool on)
-        {
-            visible = on;
-            foreach (var entry in chunks.Values)
-                if (entry.renderer != null)
-                    entry.renderer.enabled = on && entry.hasGeometry;
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -156,12 +161,14 @@ namespace Monasha.EdgeServer
             }
 
             // ── Empty chunk → clear the cell ──────────────────────────────────
-            if (vertCount == 0)
+            if (vertCount == 0 || idxCount == 0)
             {
                 if (entry.hasGeometry)
                 {
-                    TotalVertexCount   -= entry.meshes[entry.current]?.vertexCount ?? 0;
-                    TotalTriangleCount -= (int)((entry.meshes[entry.current]?.GetIndexCount(0) ?? 0) / 3);
+                    TotalVertexCount   -= entry.actualVerts[entry.current];
+                    TotalTriangleCount -= entry.actualTris[entry.current];
+                    entry.actualVerts[entry.current] = 0;
+                    entry.actualTris[entry.current]  = 0;
 
                     entry.hasGeometry = false;
                     entry.renderer.enabled = false;
@@ -190,8 +197,8 @@ namespace Monasha.EdgeServer
             // Track totals (replace this cell's old contribution)
             if (entry.hasGeometry)
             {
-                TotalVertexCount   -= entry.meshes[entry.current]?.vertexCount ?? 0;
-                TotalTriangleCount -= (int)((entry.meshes[entry.current]?.GetIndexCount(0) ?? 0) / 3);
+                TotalVertexCount   -= entry.actualVerts[entry.current];
+                TotalTriangleCount -= entry.actualTris[entry.current];
             }
 
             int vertexBytes = vertCount * 24;
@@ -199,15 +206,21 @@ namespace Monasha.EdgeServer
 
             // (Re)allocate GPU buffers only when capacity changed — same
             // size-guard trick as the legacy path.
-            if (entry.lastVertCount[write] != vertCount)
+            // Grow-only pow2 capacity: chunk sizes jitter every arrival (depth
+            // noise), so exact-size tracking reallocated constantly. With
+            // headroom, reallocs stop after warm-up; uploads/submesh use the
+            // actual counts so rendering is unaffected.
+            int vertCap = Mathf.NextPowerOfTwo(vertCount);
+            int idxCap  = Mathf.NextPowerOfTwo(idxCount);
+            if (entry.capVerts[write] < vertCap)
             {
-                mesh.SetVertexBufferParams(vertCount, VertexLayout);
-                entry.lastVertCount[write] = vertCount;
+                mesh.SetVertexBufferParams(vertCap, VertexLayout);
+                entry.capVerts[write] = vertCap;
             }
-            if (entry.lastIdxCount[write] != idxCount)
+            if (entry.capIdx[write] < idxCap)
             {
-                mesh.SetIndexBufferParams(idxCount, IndexFormat.UInt32);
-                entry.lastIdxCount[write] = idxCount;
+                mesh.SetIndexBufferParams(idxCap, IndexFormat.UInt32);
+                entry.capIdx[write] = idxCap;
             }
 
             mesh.SetVertexBufferData(data, vertStart,  0, vertexBytes, 0, FastMeshFlags);
@@ -216,11 +229,14 @@ namespace Monasha.EdgeServer
             mesh.SetSubMesh(0, new SubMeshDescriptor(0, idxCount, MeshTopology.Triangles), FastMeshFlags);
             mesh.bounds = ChunkBounds;
 
+            entry.actualVerts[write] = vertCount;
+            entry.actualTris[write]  = idxCount / 3;
+
             // Swap the visual immediately; collider follows after its bake.
             entry.current = write;
             entry.filter.sharedMesh = mesh;
             entry.hasGeometry = true;
-            entry.renderer.enabled = visible;
+            entry.renderer.enabled = true;
 
             TotalVertexCount   += vertCount;
             TotalTriangleCount += idxCount / 3;
@@ -277,7 +293,8 @@ namespace Monasha.EdgeServer
             }
 
             // ── Start the next queued bake ────────────────────────────────────
-            while (bakeTask == null && bakeQueue.Count > 0)
+            while (bakeTask == null && bakeQueue.Count > 0
+                   && Time.realtimeSinceStartup - lastBakeStartTime >= minBakeIntervalSec)
             {
                 var entry = bakeQueue.Dequeue();
                 if (!entry.hasGeometry) { entry.rebakeQueued = false; continue; }
@@ -290,6 +307,7 @@ namespace Monasha.EdgeServer
                 // Physics.BakeMesh is thread-safe; cooking options MUST match
                 // the MeshCollider's (set in CreateEntry) or PhysX re-cooks on
                 // the main thread at assignment time.
+                lastBakeStartTime = Time.realtimeSinceStartup;
                 bakeTask = Task.Run(() => Physics.BakeMesh(bakeId, /* convex: */ false, FastCookingOptions));
             }
         }

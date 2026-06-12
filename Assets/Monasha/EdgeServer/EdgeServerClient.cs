@@ -231,10 +231,8 @@ namespace Monasha.EdgeServer
         [SerializeField] private MeshCollider meshCollider;
 
         [Tooltip("Optional: the visual Renderer for the edge mesh. If assigned, " +
-                 "its visibility is driven by the Anaglyph.DebugMode toggle in the menu. " +
-                 "Leave null to keep the mesh always visible. If left null and a " +
-                 "MeshRenderer exists on the same GameObject as the MeshFilter, it " +
-                 "will be auto-discovered in Start().")]
+                 "its visibility is driven by the Camera Culling Mask (Chunk layer). " +
+                 "Leave null to rely on the mesh filter only.")]
         [SerializeField] private Renderer     meshRenderer;
         private Mesh receivedMesh;
         private int  meshesReceived = 0; // Counter used to throttle MeshCollider updates
@@ -367,10 +365,9 @@ namespace Monasha.EdgeServer
 
             if (meshRenderer != null)
             {
-                // Initial visibility mirrors the current debug-mode state.
-                meshRenderer.enabled = AnaglyphCore.DebugMode;
-                // Live updates when the user toggles the debug button in the UI.
-                AnaglyphCore.DebugModeChanged += OnDebugModeChanged;
+                // Mesh visibility is now handled by the Camera Culling Mask 
+                // (via drawScanMesh in Settings.cs). Ensure the renderer is on.
+                meshRenderer.enabled = true;
             }
 
             // Match the MeshCollider's cooking options to the ones we'll bake with.
@@ -457,18 +454,6 @@ namespace Monasha.EdgeServer
                 if (!autoReconnect) yield break;
                 yield return new WaitForSeconds(reconnectIntervalSec);
             }
-        }
-
-        // ─────────────────────────────────────────────────────────────────────
-        // OnDebugModeChanged — Toggles edge-mesh visibility with the debug UI
-        //
-        // Subscribed in Start() once a meshRenderer is discovered. Unsubscribed
-        // in OnDestroy() to prevent leaked handlers surviving scene reloads.
-        // ─────────────────────────────────────────────────────────────────────
-        private void OnDebugModeChanged(bool on)
-        {
-            if (meshRenderer != null)
-                meshRenderer.enabled = on;
         }
 
         // Attempts a single TCP connection. Returns true on success and starts
@@ -1215,7 +1200,7 @@ namespace Monasha.EdgeServer
         {
             // Unsubscribe from the debug-mode event so we don't leak a handler
             // across scene reloads / domain reloads.
-            AnaglyphCore.DebugModeChanged -= OnDebugModeChanged;
+            // AnaglyphCore.DebugModeChanged -= OnDebugModeChanged;
 
             // Signal the reader thread to exit. Closing the stream will unblock
             // any in-progress Read() by throwing — the reader's catch handles it.
