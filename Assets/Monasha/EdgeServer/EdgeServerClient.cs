@@ -737,6 +737,12 @@ namespace Monasha.EdgeServer
             // ── Read timestamp echo and compute RTT ───────────────────────────
             long sentTimestampMs = (long)BitConverter.ToUInt64(data, offset);
             offset += 8;
+
+            float serverTotalMs     = BitConverter.ToSingle(data, offset); offset += 4;
+            float serverParseMs     = BitConverter.ToSingle(data, offset); offset += 4;
+            float serverIntegrateMs = BitConverter.ToSingle(data, offset); offset += 4;
+            float serverMeshMs      = BitConverter.ToSingle(data, offset); offset += 4;
+
             long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             long rttMs = nowMs - sentTimestampMs;
             lastResponseBytesRecv = data.Length + 5; // payload + 5-byte header
@@ -755,7 +761,8 @@ namespace Monasha.EdgeServer
                 // serverTsMs is the timestamp the Quest stamped at send, echoed back by the Mac;
                 // it lets us join this row to the Mac-side per-stage timing CSV.
                 MetricsLogger.Instance?.LogMeshSample(rttMs, lastPayloadBytesSent, lastResponseBytesRecv,
-                    0, 0, posDelta, rotDelta, discarded: true, serverTsMs: sentTimestampMs);
+                    0, 0, posDelta, rotDelta, discarded: true, serverTsMs: sentTimestampMs,
+                    serverTotalMs, serverParseMs, serverIntegrateMs, serverMeshMs);
                 return;
             }
 
@@ -879,7 +886,8 @@ namespace Monasha.EdgeServer
             // Log successful mesh application. serverTsMs is the round-tripped timestamp;
             // pandas joins on this to the Mac-side CSV for per-stage server timings.
             MetricsLogger.Instance?.LogMeshSample(rttMs, lastPayloadBytesSent, lastResponseBytesRecv,
-                vertCount, idxCount / 3, posDelta, rotDelta, discarded: false, serverTsMs: sentTimestampMs);
+                vertCount, idxCount / 3, posDelta, rotDelta, discarded: false, serverTsMs: sentTimestampMs,
+                serverTotalMs, serverParseMs, serverIntegrateMs, serverMeshMs);
 
             if (verboseLogging)
                 Debug.Log($"[EdgeServerClient] Mesh applied: {vertCount}v {idxCount / 3}t | RTT={rttMs}ms drift={posDelta:F3}m/{rotDelta:F1}°");
@@ -913,6 +921,12 @@ namespace Monasha.EdgeServer
             // ── Timestamp echo → RTT ──────────────────────────────────────────
             long sentTimestampMs = (long)BitConverter.ToUInt64(data, offset);
             offset += 8;
+
+            float serverTotalMs     = BitConverter.ToSingle(data, offset); offset += 4;
+            float serverParseMs     = BitConverter.ToSingle(data, offset); offset += 4;
+            float serverIntegrateMs = BitConverter.ToSingle(data, offset); offset += 4;
+            float serverMeshMs      = BitConverter.ToSingle(data, offset); offset += 4;
+
             long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             long rttMs = nowMs - sentTimestampMs;
             lastResponseBytesRecv = length + 5; // actual payload + framing header
@@ -976,7 +990,8 @@ namespace Monasha.EdgeServer
 
             // Metrics row: per-batch sums (what this round trip delivered).
             MetricsLogger.Instance?.LogMeshSample(rttMs, lastPayloadBytesSent, lastResponseBytesRecv,
-                batchVerts, batchTris, posDelta, rotDelta, discarded: false, serverTsMs: sentTimestampMs);
+                batchVerts, batchTris, posDelta, rotDelta, discarded: false, serverTsMs: sentTimestampMs,
+                serverTotalMs, serverParseMs, serverIntegrateMs, serverMeshMs);
 
             if (verboseLogging)
                 Debug.Log($"[EdgeServerClient] Chunk batch: {chunkCount} chunks {batchVerts}v {batchTris}t | " +

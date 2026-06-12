@@ -65,6 +65,12 @@ namespace Monasha.Metrics
             DontDestroyOnLoad(gameObject);
         }
 
+        private void Start()
+        {
+            // Force session to start automatically on every run
+            if (!sessionActive) StartSession();
+        }
+
         // ── State ─────────────────────────────────────────────────────────────
         private StreamWriter writer;
         private bool         sessionActive;
@@ -95,6 +101,13 @@ namespace Monasha.Metrics
         public string Architecture      => architecture;
         public string EnvironmentLabel  => environmentLabel;
         public string ParticipantId     => participantId;
+
+        // ── Cumulative bandwidth totals (sent/recv including headers) ──────────
+        private long cumBytesSent;
+        private long cumBytesRecv;
+
+        public long CumBytesSent => cumBytesSent;
+        public long CumBytesRecv => cumBytesRecv;
 
         // ── Rolling totals (printed as summary at session end) ────────────────
         private int   frameCount;
@@ -161,8 +174,9 @@ namespace Monasha.Metrics
                     "sample_type,session_time_s,wall_ms," +
                     "event_name,event_payload," +
                     "frame_time_ms,fps,display_hz," +
-                    "rtt_ms,payload_bytes,response_bytes,vertex_count,triangle_count," +
-                    "pos_drift_m,rot_drift_deg,discarded,server_ts_ms," +
+                    "rtt_ms,payload_bytes,response_bytes,cum_bytes_sent,cum_bytes_recv," +
+                    "vertex_count,triangle_count,pos_drift_m,rot_drift_deg,discarded,server_ts_ms," +
+                    "server_total_ms,server_parse_ms,server_integrate_ms,server_mesh_ms," +
                     "battery_pct,voltage_mv,current_ma,battery_temp_c,thermal_status," +
                     "cpu_level,gpu_level,app_fps,headroom," +
                     "study_phase,participant_id,headset_id,architecture,environment," +
@@ -176,6 +190,8 @@ namespace Monasha.Metrics
                 sumRttMs         = 0;
                 sumPayloadBytes  = 0;
                 sumResponseBytes = 0;
+                cumBytesSent     = 0;
+                cumBytesRecv     = 0;
 
                 // Meta row: snapshot of session identity at the moment recording began.
                 WriteMetaRow();
@@ -227,7 +243,7 @@ namespace Monasha.Metrics
             BeginRow("meta");
             EmptyN(2);    // event_name, event_payload
             EmptyN(3);    // frame_time_ms, fps, display_hz
-            EmptyN(9);    // mesh columns (rtt..server_ts_ms)
+            EmptyN(15);   // mesh columns (rtt..server_mesh_ms)
             EmptyN(5);    // system columns
             EmptyN(4);    // ovr columns
             Col(studyPhase);
@@ -253,7 +269,7 @@ namespace Monasha.Metrics
             Col(frameTimeMs);                    // frame_time_ms
             Col(fps);                            // fps
             Col(displayHz);                      // display_hz
-            EmptyN(9);                           // mesh cols
+            EmptyN(15);                          // mesh cols
             EmptyN(5);                           // system cols
             EmptyN(4);                           // ovr cols
             EmptyN(7);                           // meta cols
@@ -278,10 +294,17 @@ namespace Monasha.Metrics
             float posDriftM,
             float rotDriftDeg,
             bool  discarded,
-            long  serverTsMs = 0    // timestamp echo from Mac; 0 in standalone
+            long  serverTsMs = 0,   // timestamp echo from Mac; 0 in standalone
+            float serverTotalMs = 0f,
+            float serverParseMs = 0f,
+            float serverIntegrateMs = 0f,
+            float serverMeshMs = 0f
         )
         {
             if (!sessionActive || writer == null) return;
+
+            cumBytesSent += payloadBytes;
+            cumBytesRecv += responseBytes;
 
             BeginRow("mesh");
             EmptyN(2);                           // event cols
@@ -289,12 +312,18 @@ namespace Monasha.Metrics
             Col(rttMs);                          // rtt_ms
             Col(payloadBytes);                   // payload_bytes
             Col(responseBytes);                  // response_bytes
+            Col(cumBytesSent);                   // cum_bytes_sent
+            Col(cumBytesRecv);                   // cum_bytes_recv
             Col(vertexCount);                    // vertex_count
             Col(triangleCount);                  // triangle_count
             Col(posDriftM);                      // pos_drift_m
             Col(rotDriftDeg);                    // rot_drift_deg
             Col(discarded);                      // discarded
             Col(serverTsMs);                     // server_ts_ms
+            Col(serverTotalMs);                  // server_total_ms
+            Col(serverParseMs);                  // server_parse_ms
+            Col(serverIntegrateMs);              // server_integrate_ms
+            Col(serverMeshMs);                   // server_mesh_ms
             EmptyN(5);                           // system cols
             EmptyN(4);                           // ovr cols
             EmptyN(7);                           // meta cols
@@ -350,7 +379,7 @@ namespace Monasha.Metrics
             BeginRow("system");
             EmptyN(2);                           // event cols
             EmptyN(3);                           // frame cols
-            EmptyN(9);                           // mesh cols
+            EmptyN(15);                          // mesh cols
             Col(batteryPct);                     // battery_pct
             Col(voltageMv);                      // voltage_mv
             Col(currentMa);                      // current_ma
@@ -373,7 +402,7 @@ namespace Monasha.Metrics
             BeginRow("ovr");
             EmptyN(2);                           // event cols
             EmptyN(3);                           // frame cols
-            EmptyN(9);                           // mesh cols
+            EmptyN(15);                          // mesh cols
             EmptyN(5);                           // system cols
             Col(cpuLevel);                       // cpu_level
             Col(gpuLevel);                       // gpu_level
@@ -404,7 +433,7 @@ namespace Monasha.Metrics
             Col(safeName);                       // event_name
             Col(safePayload);                    // event_payload
             EmptyN(3);                           // frame cols
-            EmptyN(9);                           // mesh cols
+            EmptyN(15);                          // mesh cols
             EmptyN(5);                           // system cols
             EmptyN(4);                           // ovr cols
             EmptyN(7);                           // meta cols
@@ -457,7 +486,7 @@ namespace Monasha.Metrics
             float rotDriftDeg,
             bool  discarded
         ) => LogMeshSample(rttMs, payloadBytes, responseBytes, vertexCount, triangleCount,
-                           posDriftM, rotDriftDeg, discarded, 0);
+                           posDriftM, rotDriftDeg, discarded, 0, 0, 0, 0, 0);
 
         private void OnDestroy()
         {

@@ -44,7 +44,7 @@ namespace Monasha.Metrics
 
         [Header("Auto-start")]
         [Tooltip("If true, a recording session begins as soon as this component loads.")]
-        [SerializeField] private bool autoStartOnPlay = false;
+        [SerializeField] private bool autoStartOnPlay = true;
 
         [Header("Status (read-only)")]
         [Tooltip("Reflects whether a recording session is currently active. " +

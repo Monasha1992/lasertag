@@ -130,7 +130,11 @@ namespace Monasha.Metrics
                 posDriftM:     0f,
                 rotDriftDeg:   0f,
                 discarded:     false,
-                serverTsMs:    0);
+                serverTsMs:    0,
+                serverTotalMs:     0f,
+                serverParseMs:     0f,
+                serverIntegrateMs: 0f,
+                serverMeshMs:      0f);
         }
     }
 }
