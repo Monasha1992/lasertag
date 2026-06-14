@@ -29,7 +29,7 @@ using UnityEngine.Rendering;
 //     [0x01][len3][len2][len1][len0]  ← 5-byte header
 //     [8 bytes timestamp ms]          ← uint64 Unix ms (for RTT measurement)
 //     [636 bytes frame data]          ← matrices + volume config + player heads
-//     [width×height×4 bytes]          ← raw float32 depth pixels
+//     [width×height×2 bytes]          ← uint16 normalized-NDC depth (little-endian)
 //
 //   Incoming (Mac → Quest), type 0x03 — legacy single global mesh:
 //     [0x03][len3][len2][len1][len0]  ← 5-byte header
@@ -1050,18 +1050,30 @@ namespace Monasha.EdgeServer
                     return;
                 }
 
-                // ── Copy depth bytes into a pooled managed buffer ─────────────
-                // NativeArray.CopyTo(managed[]) does a single memcpy with no GC,
-                // replacing the old `.ToArray()` call that allocated ~360KB per
-                // send. The pool grows once and is reused forever.
-                NativeArray<byte> depthNative = request.GetData<byte>();
-                int depthLen = depthNative.Length;
+                // ── Pack depth into 16-bit, into a pooled managed buffer ──────
+                // The readback texture is R32Float, but the Quest depth sensor
+                // only carries ~16 bits of real precision (the source is an
+                // R16_UNorm NDC texture). So each normalized [0,1] sample is
+                // packed into a uint16, halving the wire payload (~360KB →
+                // ~180KB/frame, ~29 → ~15 Mbit/s) with NO loss relative to the
+                // sensor. The Mac re-uploads these as .r16Unorm and samples them
+                // back as float, so the integration/dilation maths is unchanged.
+                // Cost: one ~90k-element pack loop here on the main thread
+                // (sub-millisecond at this resolution and ≤10 Hz send rate).
+                NativeArray<float> depthFloats = request.GetData<float>();
+                int pixelCount = depthFloats.Length;
+                int depthLen   = pixelCount * 2;                 // 2 bytes/pixel (uint16)
                 if (depthBytesBuffer == null || depthBytesBuffer.Length < depthLen)
                     depthBytesBuffer = new byte[Mathf.NextPowerOfTwo(depthLen)];
-                NativeArray<byte>.Copy(depthNative, 0, depthBytesBuffer, 0, depthLen);
+                for (int i = 0; i < pixelCount; i++)
+                {
+                    int q = Mathf.Clamp(Mathf.RoundToInt(depthFloats[i] * 65535f), 0, 65535);
+                    depthBytesBuffer[i * 2]     = (byte)(q & 0xFF);   // little-endian uint16
+                    depthBytesBuffer[i * 2 + 1] = (byte)(q >> 8);
+                }
 
                 // ── Build the frame payload into the pooled send buffer ───────
-                // Layout: [5 B header][8 B timestamp][636 B frame meta][depth]
+                // Layout: [5 B header][8 B timestamp][636 B frame meta][depth uint16]
                 // Everything is composed into a single contiguous buffer so the
                 // background send only needs one stream.Write call.
                 byte[] frameData = SerializeFrameData();       // 636 B (allocated per send — small)

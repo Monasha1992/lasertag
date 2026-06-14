@@ -939,7 +939,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ea161e2d49f5148a3bc2434183e63edc, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.ArchitectureManager
-  mode: 1
+  mode: 0
   headsetId: quest_B
   environmentLabel: unknown
   buildSha: 
@@ -1267,58 +1267,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 174246e5395d1439caf6ff5ae983e51f, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.FrameRateCollector
---- !u!114 &1881734020
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1881734007}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 9f3697801689d47f5adc4236064cf186, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.SystemMetricsCollector
-  sampleIntervalSec: 1
---- !u!114 &1881734021
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1881734007}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d0fd6b07ff53c4e8d825a22f0f060fbb, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.OvrPerfCollector
-  sampleIntervalSec: 1
---- !u!114 &1881734022
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1881734007}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 1af11af1cd8df4ac48ec75b3c2a84392, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.StandaloneMeshCollector
---- !u!114 &1881734023
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1881734007}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 1e658a1597ca14283bab1138cc945b15, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.GameEventCollector
 --- !u!4 &1881734009
 Transform:
   m_ObjectHideFlags: 0
@@ -1334,6 +1284,56 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1881734020
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1881734007}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9f3697801689d47f5adc4236064cf186, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.SystemMetricsCollector
+  sampleIntervalSec: 1
+--- !u!114 &1881734021
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1881734007}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d0fd6b07ff53c4e8d825a22f0f060fbb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.OvrPerfCollector
+  sampleIntervalSec: 1
+--- !u!114 &1881734022
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1881734007}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1af11af1cd8df4ac48ec75b3c2a84392, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.StandaloneMeshCollector
+--- !u!114 &1881734023
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1881734007}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1e658a1597ca14283bab1138cc945b15, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.GameEventCollector
 --- !u!1001 &3916737362139618993
 PrefabInstance:
   m_ObjectHideFlags: 0
