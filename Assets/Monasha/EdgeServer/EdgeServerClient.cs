@@ -11,10 +11,6 @@ using Anaglyph.XRTemplate;
 using Anaglyph.XRTemplate.DepthKit;
 using Monasha.Metrics;
 using UnityEngine.Rendering;
-// Alias for the static class Anaglyph.Anaglyph.
-// The class name collides with its own namespace — without this alias, a bare
-// `Anaglyph.DebugMode` resolves to the namespace and fails to find DebugMode.
-using AnaglyphCore = Anaglyph.Anaglyph;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EdgeServerClient.cs — The Quest-side client that communicates with the Mac edge server
@@ -32,12 +28,13 @@ using AnaglyphCore = Anaglyph.Anaglyph;
 //   Outgoing (Quest → Mac):
 //     [0x01][len3][len2][len1][len0]  ← 5-byte header
 //     [8 bytes timestamp ms]          ← uint64 Unix ms (for RTT measurement)
-//     [540 bytes frame data]          ← matrices + volume config
+//     [636 bytes frame data]          ← matrices + volume config + player heads
 //     [width×height×4 bytes]          ← raw float32 depth pixels
 //
 //   Incoming (Mac → Quest), type 0x03 — legacy single global mesh:
 //     [0x03][len3][len2][len1][len0]  ← 5-byte header
 //     [8 bytes timestamp echo]        ← same timestamp we sent (RTT = now - echo)
+//     [16 bytes server timings]       ← 4×float32: total/parse/integrate/mesh ms
 //     [4 bytes vertCount]
 //     [4 bytes idxCount]
 //     [vertCount×24 bytes vertices]   ← pos.xyz + normal.xyz per vertex
@@ -46,6 +43,7 @@ using AnaglyphCore = Anaglyph.Anaglyph;
 //   Incoming (Mac → Quest), type 0x04 — chunk batch (persistent cache):
 //     [0x04][len3][len2][len1][len0]  ← 5-byte header
 //     [8 bytes timestamp echo]
+//     [16 bytes server timings]       ← 4×float32: total/parse/integrate/mesh ms
 //     [4 bytes chunkCount]
 //     then per chunk: [12 B grid coord (3×int32)][4 B vertCount][4 B idxCount]
 //                     [vertices][indices]   (vertCount 0 = clear that cell)
@@ -356,7 +354,7 @@ namespace Monasha.EdgeServer
             var cam = Camera.main;
             if (cam != null) headTransform = cam.transform;
 
-            // ── Hook the Anaglyph debug toggle for mesh visibility ────────────
+            // ── Resolve the edge-mesh renderer ────────────────────────────────
             // Auto-discover a Renderer on the meshFilter GameObject if the
             // inspector slot is empty — saves the user from having to wire
             // both MeshFilter and MeshRenderer manually.
@@ -714,8 +712,9 @@ namespace Monasha.EdgeServer
         //
         // PAYLOAD LAYOUT:
         //   Bytes 0–7   : uint64 timestamp echo → used to compute RTT
-        //   Bytes 8–11  : uint32 vertCount
-        //   Bytes 12–15 : uint32 idxCount
+        //   Bytes 8–23  : 4 × float32 server timings (total/parse/integrate/mesh ms)
+        //   Bytes 24–27 : uint32 vertCount
+        //   Bytes 28–31 : uint32 idxCount
         //   Then: vertCount × 24 bytes (pos.xyz + normal.xyz per vertex)
         //   Then: idxCount  × 4  bytes (uint32 triangle indices)
         //
@@ -898,8 +897,9 @@ namespace Monasha.EdgeServer
         // chunk into the EdgeChunkStore (the persistent client-side cache).
         //
         // PAYLOAD LAYOUT (see docs/04-protocol.md):
-        //   Bytes 0–7  : uint64 timestamp echo → RTT
-        //   Bytes 8–11 : uint32 chunkCount
+        //   Bytes 0–7   : uint64 timestamp echo → RTT
+        //   Bytes 8–23  : 4 × float32 server timings (total/parse/integrate/mesh ms)
+        //   Bytes 24–27 : uint32 chunkCount
         //   Then per chunk:
         //     12 B chunk grid coord (3 × int32)
         //     4 B vertCount, 4 B idxCount
@@ -1061,10 +1061,10 @@ namespace Monasha.EdgeServer
                 NativeArray<byte>.Copy(depthNative, 0, depthBytesBuffer, 0, depthLen);
 
                 // ── Build the frame payload into the pooled send buffer ───────
-                // Layout: [5 B header][8 B timestamp][540 B frame meta][depth]
+                // Layout: [5 B header][8 B timestamp][636 B frame meta][depth]
                 // Everything is composed into a single contiguous buffer so the
                 // background send only needs one stream.Write call.
-                byte[] frameData = SerializeFrameData();       // 636 B (reused)
+                byte[] frameData = SerializeFrameData();       // 636 B (allocated per send — small)
                 const int headerLen = 5;
                 const int tsLen     = 8;
                 int payloadLen = tsLen + frameData.Length + depthLen;
@@ -1100,8 +1100,8 @@ namespace Monasha.EdgeServer
                 // ── Push the TCP write to a background thread ─────────────────
                 // NetworkStream.Write is synchronous — on Wi-Fi with head-motion
                 // backpressure it can block 5–15ms. Doing it on the main thread
-                // was the dominant cause of head-move stutter. Read() stays on
-                // the main thread (in Update()), which is the documented safe
+                // was the dominant cause of head-move stutter. Read() runs on
+                // the dedicated reader thread, which is the documented safe
                 // pattern: separate reader/writer threads on one NetworkStream.
                 //
                 // waitingForMesh already gates to one in-flight request, so the
@@ -1213,10 +1213,6 @@ namespace Monasha.EdgeServer
         // ─────────────────────────────────────────────────────────────────────
         private void OnDestroy()
         {
-            // Unsubscribe from the debug-mode event so we don't leak a handler
-            // across scene reloads / domain reloads.
-            // AnaglyphCore.DebugModeChanged -= OnDebugModeChanged;
-
             // Signal the reader thread to exit. Closing the stream will unblock
             // any in-progress Read() by throwing — the reader's catch handles it.
             readerShouldStop = true;

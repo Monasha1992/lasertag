@@ -16,25 +16,29 @@ using UnityEngine;
 // HOW TO USE:
 //   1. Add MetricsLogger to a GameObject early in the scene (e.g. on the
 //      ArchitectureManager root). The singleton survives scene reloads.
-//   2. Set session metadata via SetSessionMetadata(...) before StartSession().
-//   3. Call StartSession() to open a new CSV file (auto-named with timestamp).
-//   4. Collectors call LogFrameSample / LogMeshSample / LogSystemSample /
+//   2. Set session metadata via SetSessionMetadata(...) before the session
+//      starts. A session auto-starts in Start() — call EndSession() +
+//      StartSession() to open a new CSV file (auto-named with timestamp)
+//      with updated metadata.
+//   3. Collectors call LogFrameSample / LogMeshSample / LogSystemSample /
 //      LogOvrSample / LogEvent on the singleton.
-//   5. Call EndSession() to flush and close (also fires on OnApplicationQuit).
+//   4. Call EndSession() to flush and close (also fires on OnApplicationQuit).
 //
 // CSV FORMAT:
 //   One header row, then rows of varying sample types. All rows share the
 //   same column union; unused columns are empty.
 //
-//   Column order (32 columns):
+//   Column order (39 columns):
 //     sample_type, session_time_s, wall_ms,
 //     // event-specific
 //     event_name, event_payload,
 //     // frame-specific
 //     frame_time_ms, fps, display_hz,
 //     // mesh-specific
-//     rtt_ms, payload_bytes, response_bytes, vertex_count, triangle_count,
-//     pos_drift_m, rot_drift_deg, discarded, server_ts_ms,
+//     rtt_ms, payload_bytes, response_bytes, cum_bytes_sent, cum_bytes_recv,
+//     vertex_count, triangle_count, pos_drift_m, rot_drift_deg, discarded,
+//     server_ts_ms, server_total_ms, server_parse_ms, server_integrate_ms,
+//     server_mesh_ms,
 //     // system-specific (1 Hz)
 //     battery_pct, voltage_mv, current_ma, battery_temp_c, thermal_status,
 //     // ovr-specific (1 Hz)
@@ -364,7 +368,7 @@ namespace Monasha.Metrics
         // ─────────────────────────────────────────────────────────────────────
         // LogSystemSample — 1 Hz battery / thermal / voltage / current row.
         // Called by SystemMetricsCollector. All values pre-converted to the
-        // documented units (mA, mV, ºC, integer thermal status 0-5).
+        // documented units (mA, mV, ºC, integer thermal status 0-6).
         // ─────────────────────────────────────────────────────────────────────
         public void LogSystemSample(
             int   batteryPct,
@@ -471,9 +475,9 @@ namespace Monasha.Metrics
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // LogFrame — DEPRECATED back-compat alias for EdgeServerClient's
-        // existing call site. Forwards to LogMeshSample. Remove once
-        // EdgeServerClient is updated to call LogMeshSample directly.
+        // LogFrame — DEPRECATED back-compat alias. Forwards to LogMeshSample.
+        // EdgeServerClient now calls LogMeshSample directly — no callers
+        // remain, so this can be deleted whenever convenient.
         // ─────────────────────────────────────────────────────────────────────
         [Obsolete("Use LogMeshSample. Kept for backwards compatibility during refactor.")]
         public void LogFrame(

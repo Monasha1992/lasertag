@@ -45,10 +45,10 @@ namespace Monasha.Metrics
         [Header("Architecture selection")]
         [Tooltip("Editor default mode — used when no scripting define is set " +
                  "(the typical Editor / Play-mode case). In a real Quest build, " +
-                 "this field is OVERRIDDEN by the EDGE_BUILD scripting define:\n" +
-                 "  • Build Profile with EDGE_BUILD define → runtime mode = Edge\n" +
-                 "  • Build Profile without that define   → runtime mode = Standalone\n" +
-                 "So this Inspector value only matters in the Editor — set it to " +
+                 "this field is OVERRIDDEN by the scripting defines:\n" +
+                 "  • Build Profile with EDGE_BUILD define       → runtime mode = Edge\n" +
+                 "  • Build Profile with STANDALONE_BUILD define → runtime mode = Standalone\n" +
+                 "With neither define this Inspector value is used — set it to " +
                  "whichever mode you're currently iterating on.")]
         [SerializeField] private ArchitectureMode mode = ArchitectureMode.Standalone;
 

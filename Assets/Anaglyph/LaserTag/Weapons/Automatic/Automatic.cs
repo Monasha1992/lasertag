@@ -1,3 +1,4 @@
+using System;
 using Anaglyph.Lasertag.Logistics;
 using Unity.Netcode;
 using UnityEngine;
@@ -14,6 +15,11 @@ namespace Anaglyph.Lasertag.Weapons
 		[SerializeField] private GameObject boltPrefab = null;
 		[SerializeField] private Transform emitFromTransform = null;
 		public UnityEvent onFire = new();
+
+		// Raised on each LOCAL auto-fire tick. See Blaster.LocalFired — same hook
+		// for GameEventCollector's `shot_fired` metric (full-auto raises it once
+		// per bolt, which is the intended per-shot granularity).
+		public static event Action LocalFired = delegate { };
 
 		private bool firing;
 
@@ -58,6 +64,7 @@ namespace Anaglyph.Lasertag.Weapons
 			n.SpawnWithOwnership(NetworkManager.Singleton.LocalClientId);
 
 			onFire.Invoke();
+			LocalFired.Invoke();
 		}
 	}
 }

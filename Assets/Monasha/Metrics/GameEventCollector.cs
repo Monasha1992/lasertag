@@ -1,4 +1,5 @@
 using Anaglyph.Lasertag;
+using Anaglyph.Lasertag.Weapons;
 using UnityEngine;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -10,8 +11,8 @@ using UnityEngine;
 //   mesh / system / OVR samples on the same timeline.
 //
 //   Events captured:
-//     - shot_fired     — Local player pulled the trigger (MainPlayer.Died,
-//                         player damage etc. fire on this scope too).
+//     - shot_fired     — Local player fired (Blaster.LocalFired / Automatic.LocalFired
+//                         static events; full-auto raises one per bolt).
 //     - player_damaged — Local player took damage
 //     - player_died    — Local player died
 //     - player_respawned — Local player respawned
@@ -47,14 +48,6 @@ namespace Monasha.Metrics
 {
     public class GameEventCollector : MonoBehaviour
     {
-        // Cached Blaster reference, populated lazily — Blasters are usually
-        // child GameObjects of the rig prefab, so they don't exist at
-        // OnEnable time. We look them up on each shot from a parent hierarchy
-        // search instead, but cache the most-recent finder result so steady
-        // state has zero lookups.
-        // (Implementation note: easier to subscribe at the local player
-        // level — see below.)
-
         private void OnEnable()
         {
             // MainPlayer static events fire from the locally-controlled
@@ -63,6 +56,11 @@ namespace Monasha.Metrics
             MainPlayer.Damaged   += OnDamaged;
             MainPlayer.Died      += OnDied;
             MainPlayer.Respawned += OnRespawned;
+
+            // Local-fire static events from both weapon types (runtime-spawned
+            // prefabs can't be Inspector-wired to this scene component).
+            Blaster.LocalFired   += OnShotFired;
+            Automatic.LocalFired += OnShotFired;
         }
 
         private void OnDisable()
@@ -70,6 +68,9 @@ namespace Monasha.Metrics
             MainPlayer.Damaged   -= OnDamaged;
             MainPlayer.Died      -= OnDied;
             MainPlayer.Respawned -= OnRespawned;
+
+            Blaster.LocalFired   -= OnShotFired;
+            Automatic.LocalFired -= OnShotFired;
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -91,20 +92,10 @@ namespace Monasha.Metrics
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // Public hook used by Blaster.onFire to emit a shot_fired event.
-        //
-        // Why this design: Blasters are inside the runtime-spawned XR rig
-        // prefab. The cleanest way to wire one of their public UnityEvent
-        // fields to MetricsLogger from outside the prefab is via an explicit
-        // hook the prefab references. Wire each Blaster's `onFire` UnityEvent
-        // in the Inspector to call GameEventCollector.OnShotFired (drag the
-        // MetricsRoot GameObject from the scene into the UnityEvent slot, pick
-        // GameEventCollector → OnShotFired from the dropdown).
-        //
-        // Alternative (no Inspector wiring needed): if you'd rather subscribe
-        // by reflection, FindObjectsOfType<Blaster>() in Start() and subscribe
-        // each Blaster.onFire to OnShotFired. That works but is fragile if
-        // Blasters are instantiated dynamically. Inspector wiring is cleaner.
+        // shot_fired handler — subscribed to Blaster.LocalFired /
+        // Automatic.LocalFired in OnEnable. Also kept public so a Blaster/
+        // Automatic `onFire` UnityEvent could call it directly if ever wired in
+        // the Inspector (not required — the static-event subscription covers it).
         // ─────────────────────────────────────────────────────────────────────
         public void OnShotFired()
         {

@@ -31,7 +31,7 @@ using UnityEngine;
 //
 // OUTPUT:
 //   CSV files go to Application.persistentDataPath. On the Quest, pull with:
-//     adb pull /sdcard/Android/data/<package>/files/edge_metrics_<ts>.csv
+//     adb pull /sdcard/Android/data/<package>/files/metrics_<ts>.csv
 // ─────────────────────────────────────────────────────────────────────────────
 
 namespace Monasha.Metrics

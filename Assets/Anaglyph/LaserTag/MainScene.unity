@@ -570,8 +570,6 @@ GameObject:
   m_Component:
   - component: {fileID: 1208629356}
   - component: {fileID: 1208629355}
-  - component: {fileID: 1208629358}
-  - component: {fileID: 1208629357}
   m_Layer: 0
   m_Name: EdgeServerManager
   m_TagString: Untagged
@@ -627,7 +625,7 @@ MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1208629354}
+  m_GameObject: {fileID: 1881734007}
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: e46bcfd9686cc4e98af3db748fabfa76, type: 3}
@@ -642,7 +640,7 @@ MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1208629354}
+  m_GameObject: {fileID: 1881734007}
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 1281707e7f3644e02bba64ce22b17e2c, type: 3}
@@ -1011,7 +1009,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 828c90857d65740bdb3cf0d4567fae48, type: 2}
+  - {fileID: 2100000, guid: f3c0a6727bfa7400e84bd556a0009a6a, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -1246,8 +1244,14 @@ GameObject:
   m_Component:
   - component: {fileID: 1881734009}
   - component: {fileID: 1881734008}
+  - component: {fileID: 1208629358}
+  - component: {fileID: 1208629357}
+  - component: {fileID: 1881734020}
+  - component: {fileID: 1881734021}
+  - component: {fileID: 1881734022}
+  - component: {fileID: 1881734023}
   m_Layer: 0
-  m_Name: FrameRateCollector
+  m_Name: MetricsRoot
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1263,8 +1267,58 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 174246e5395d1439caf6ff5ae983e51f, type: 3}
-  m_Name: 
+  m_Name:
   m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.FrameRateCollector
+--- !u!114 &1881734020
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1881734007}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9f3697801689d47f5adc4236064cf186, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.SystemMetricsCollector
+  sampleIntervalSec: 1
+--- !u!114 &1881734021
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1881734007}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d0fd6b07ff53c4e8d825a22f0f060fbb, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.OvrPerfCollector
+  sampleIntervalSec: 1
+--- !u!114 &1881734022
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1881734007}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1af11af1cd8df4ac48ec75b3c2a84392, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.StandaloneMeshCollector
+--- !u!114 &1881734023
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1881734007}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1e658a1597ca14283bab1138cc945b15, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.GameEventCollector
 --- !u!4 &1881734009
 Transform:
   m_ObjectHideFlags: 0

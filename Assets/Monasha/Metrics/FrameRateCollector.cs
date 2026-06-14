@@ -22,8 +22,8 @@ using UnityEngine;
 //
 // PERFORMANCE NOTE:
 //   At 90 Hz this writes ~90 rows per second to the CSV. The StringBuilder
-//   in MetricsLogger is reused (no per-row alloc) and the file flushes once
-//   per second (every 60 rows). Net cost on Quest 3: ~0.1 ms/frame.
+//   in MetricsLogger is reused (no per-row alloc) and the file flushes every
+//   60 rows (~0.7 s at 90 Hz). Net cost on Quest 3: ~0.1 ms/frame.
 // ─────────────────────────────────────────────────────────────────────────────
 
 namespace Monasha.Metrics

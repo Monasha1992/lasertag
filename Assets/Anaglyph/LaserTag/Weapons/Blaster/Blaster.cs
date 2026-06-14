@@ -1,3 +1,4 @@
+using System;
 using Anaglyph.Lasertag.Logistics;
 using Unity.Netcode;
 using UnityEngine;
@@ -11,6 +12,12 @@ namespace Anaglyph.Lasertag.Weapons
 		[SerializeField] private GameObject boltPrefab;
 		[SerializeField] private Transform emitFromTransform;
 		public UnityEvent onFire = new();
+
+		// Raised when the LOCAL player fires (Fire() runs only from local input).
+		// GameEventCollector subscribes to log a `shot_fired` metrics event — the
+		// runtime-spawned weapon prefab can't reference the scene logger via the
+		// Inspector, so a static event is the clean cross-boundary hook.
+		public static event Action LocalFired = delegate { };
 
 		private void OnFire(InputAction.CallbackContext context)
 		{
@@ -34,6 +41,7 @@ namespace Anaglyph.Lasertag.Weapons
 			n.SpawnWithOwnership(NetworkManager.Singleton.LocalClientId);
 			
 			onFire.Invoke();
+			LocalFired.Invoke();
 		}
 	}
 }

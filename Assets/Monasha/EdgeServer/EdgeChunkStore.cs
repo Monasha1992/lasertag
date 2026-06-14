@@ -3,8 +3,6 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Rendering;
-// Alias for the static class Anaglyph.Anaglyph (name collides with its namespace).
-using AnaglyphCore = Anaglyph.Anaglyph;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EdgeChunkStore.cs — Client-side persistent cache of edge-server mesh chunks
@@ -33,10 +31,11 @@ using AnaglyphCore = Anaglyph.Anaglyph;
 //   rewritten mid-cook or the result is torn. Each chunk therefore owns two
 //   mesh buffers and alternates uploads between them: a new arrival writes
 //   the buffer that is NOT being baked, swaps the visual mesh immediately,
-//   and queues a bake for the collider. One bake runs at a time (bounded
-//   CPU); the cooked result is assigned on the main thread when ready.
-//   Collider therefore lags the visuals by at most one bake (~10-50 ms per
-//   chunk — chunks are small).
+//   and queues a bake for the collider. One bake runs at a time across ALL
+//   chunks (FIFO queue) and bake starts are rate-limited by
+//   minBakeIntervalSec; the cooked result is assigned on the main thread
+//   when ready. A chunk's collider therefore lags its visuals until its
+//   bake reaches the front of the queue and completes.
 //
 // DEBUG VISIBILITY:
 //   Chunk renderers are on the "Chunk" layer. Visibility is driven by the
@@ -62,8 +61,6 @@ namespace Monasha.EdgeServer
             public int    current = 0;
             public int    baking  = -1;
 
-            // Size guards so SetVertexBufferParams (a GPU realloc) only runs
-            // when this buffer's capacity actually changed.
             // Declared GPU buffer capacity per buffer (pow2, grow-only).
             // SetVertexBufferParams is a GPU reallocation — calling it only
             // when the pow2 capacity grows (instead of on every size change)
@@ -145,7 +142,8 @@ namespace Monasha.EdgeServer
         //
         // `data` is the raw batch payload buffer (pooled — valid only during
         // this call). vertStart/indexStart are byte offsets into it.
-        // vertCount == 0 clears the cell (geometry disappeared on the server).
+        // vertCount == 0 (or idxCount == 0) clears the cell (geometry
+        // disappeared on the server).
         // ─────────────────────────────────────────────────────────────────────
         public void ApplyChunk(Vector3Int coord, byte[] data,
                                int vertStart, int vertCount,
@@ -204,8 +202,6 @@ namespace Monasha.EdgeServer
             int vertexBytes = vertCount * 24;
             int indexBytes  = idxCount * 4;
 
-            // (Re)allocate GPU buffers only when capacity changed — same
-            // size-guard trick as the legacy path.
             // Grow-only pow2 capacity: chunk sizes jitter every arrival (depth
             // noise), so exact-size tracking reallocated constantly. With
             // headroom, reallocs stop after warm-up; uploads/submesh use the

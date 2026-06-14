@@ -13,8 +13,8 @@ using UnityEngine;
 //     - headroom       (float ≈ 1.0 - app_gpu_time / frame_budget; >0 means
 //                       still has slack, <0 means over-budget)
 //
-//   Also detects DROPS in cpu_level or gpu_level frame-over-frame and emits an
-//   event row each time. These are the most direct signal we have that the
+//   Also detects DROPS in cpu_level or gpu_level between consecutive 1 Hz
+//   samples and emits an event row each time. These are the most direct signal we have that the
 //   Quest is thermally throttling — when the OS reduces the perf tier the app
 //   asked for, it's because the SoC can't sustain that tier any more.
 //
@@ -34,8 +34,8 @@ using UnityEngine;
 //
 // PLATFORM NOTES:
 //   - OVRPlugin is part of the Meta XR SDK; available in all Quest builds.
-//   - Editor without Quest Link → OVRPlugin queries throw; we catch and
-//     default to -1 / 0 so the CSV still writes a row (just an empty one).
+//   - In the Editor the whole OVRPlugin block is compiled out
+//     (#if !UNITY_EDITOR), so rows carry the -1 / 0 "unavailable" defaults.
 //   - `OVRPlugin.GetAppFramerate()` and the app-time queries are wrapped in
 //     try/catch because their exact signatures vary between SDK versions.
 //     The cpu/gpu level properties have been stable across SDK versions for
@@ -138,7 +138,7 @@ namespace Monasha.Metrics
             catch (System.Exception) { headroom = 0f; }
 
             // ── Throttle-event detection ──────────────────────────────────────
-            // When the perf tier DROPS frame-over-frame, the OS has reduced
+            // When the perf tier DROPS between samples, the OS has reduced
             // the resources Meta is granting us. That's the canonical
             // "throttling occurred" event. Rises are also possible (when the
             // device cools down and the OS gives back) but less interesting
