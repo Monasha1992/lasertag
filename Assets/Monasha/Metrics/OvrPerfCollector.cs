@@ -9,9 +9,10 @@ using UnityEngine;
 //   `ovr` row into MetricsLogger:
 //     - cpu_level      (int 0-4, the CPU performance tier the system is at)
 //     - gpu_level      (int 0-4, ditto for GPU)
-//     - app_fps        (float — the app's recent framerate as reported by OVRPlugin)
-//     - headroom       (float ≈ 1.0 - app_gpu_time / frame_budget; >0 means
-//                       still has slack, <0 means over-budget)
+//
+//   (app_fps and headroom were removed: under this project's OpenXR backend
+//   OVRPlugin.GetAppFramerate() returns 0, and headroom was just frame_time_ms
+//   re-expressed. Use the `frame` rows for fps / frame time instead.)
 //
 //   Also detects DROPS in cpu_level or gpu_level between consecutive 1 Hz
 //   samples and emits an event row each time. These are the most direct signal we have that the
@@ -35,11 +36,9 @@ using UnityEngine;
 // PLATFORM NOTES:
 //   - OVRPlugin is part of the Meta XR SDK; available in all Quest builds.
 //   - In the Editor the whole OVRPlugin block is compiled out
-//     (#if !UNITY_EDITOR), so rows carry the -1 / 0 "unavailable" defaults.
-//   - `OVRPlugin.GetAppFramerate()` and the app-time queries are wrapped in
-//     try/catch because their exact signatures vary between SDK versions.
-//     The cpu/gpu level properties have been stable across SDK versions for
-//     years, so they're the most reliable signal.
+//     (#if !UNITY_EDITOR), so rows carry the -1 "unavailable" defaults.
+//   - The cpu/gpu level properties are stable and work under the OpenXR
+//     backend (verified: they report real tiers on-device).
 // ─────────────────────────────────────────────────────────────────────────────
 
 namespace Monasha.Metrics
@@ -80,62 +79,27 @@ namespace Monasha.Metrics
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // SampleOnce — Read every OVR field, emit one `ovr` row, detect drops.
+        // SampleOnce — Read the OVR perf tiers, emit one `ovr` row, detect drops.
         //
-        // Each OVRPlugin access is wrapped in try/catch so a single missing
-        // API on an older SDK doesn't take down the whole sample. The fallback
-        // values (cpu/gpu = -1, fps = 0, headroom = 0) are recognisable as
-        // "unavailable" in the CSV.
+        // Each OVRPlugin access is wrapped in try/catch so a single missing API
+        // doesn't take down the whole sample. The fallback value (cpu/gpu = -1)
+        // is recognisable as "unavailable" in the CSV.
         // ─────────────────────────────────────────────────────────────────────
         private void SampleOnce()
         {
-            int   cpuLevel = -1;
-            int   gpuLevel = -1;
-            float appFps   = 0f;
-            float headroom = 0f;
+            int cpuLevel = -1;
+            int gpuLevel = -1;
 
 #if !UNITY_EDITOR
             // ── CPU/GPU perf tiers (the throttle signal) ──────────────────────
-            // These properties have been stable in OVRPlugin since Meta XR SDK
-            // v50ish; they return the *current* perf tier the OS is granting
-            // the app, NOT the level the app requested. So when these drop,
-            // it means the OS has reduced what the app gets.
+            // These properties return the *current* perf tier the OS is granting
+            // the app, NOT the level the app requested. So when these drop, it
+            // means the OS has reduced what the app gets.
             try { cpuLevel = OVRPlugin.cpuLevel; }
             catch (System.Exception) { cpuLevel = -1; }
 
             try { gpuLevel = OVRPlugin.gpuLevel; }
             catch (System.Exception) { gpuLevel = -1; }
-
-            // ── App framerate (OVR-reported) ──────────────────────────────────
-            // GetAppFramerate returns the smoothed framerate OVRPlugin is
-            // tracking internally — closer to the compositor's view than
-            // 1/Time.deltaTime is.
-            try { appFps = OVRPlugin.GetAppFramerate(); }
-            catch (System.Exception) { appFps = 0f; }
-
-            // ── Headroom: how much of the frame budget the app uses ──────────
-            //   1.0  = 0 % used (idle)
-            //   0.0  = exactly at limit (no slack)
-            //   <0.0 = over budget (frame missed deadline)
-            //
-            // Computed from the actual frame time vs the display's budget.
-            // This includes both CPU and GPU work (not just GPU), which is a
-            // less precise signal than OVRPlugin.GetAppGpuTime() would give,
-            // but the latter's signature varies across Meta XR SDK versions
-            // (sometimes float seconds, sometimes ms, sometimes absent) — a
-            // simple Time.unscaledDeltaTime works on every SDK and is good
-            // enough as a throttling-headroom proxy for thesis purposes.
-            try
-            {
-                float displayHz = OVRPlugin.systemDisplayFrequency;
-                if (displayHz > 0f)
-                {
-                    float frameTimeMs   = Time.unscaledDeltaTime * 1000f;
-                    float frameBudgetMs = 1000f / displayHz;
-                    headroom = 1f - (frameTimeMs / frameBudgetMs);
-                }
-            }
-            catch (System.Exception) { headroom = 0f; }
 
             // ── Throttle-event detection ──────────────────────────────────────
             // When the perf tier DROPS between samples, the OS has reduced
@@ -159,7 +123,7 @@ namespace Monasha.Metrics
             if (gpuLevel >= 0) lastGpuLevel = gpuLevel;
 #endif
 
-            MetricsLogger.Instance?.LogOvrSample(cpuLevel, gpuLevel, appFps, headroom);
+            MetricsLogger.Instance?.LogOvrSample(cpuLevel, gpuLevel);
         }
     }
 }

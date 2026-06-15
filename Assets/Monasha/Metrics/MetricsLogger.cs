@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -28,7 +29,7 @@ using UnityEngine;
 //   One header row, then rows of varying sample types. All rows share the
 //   same column union; unused columns are empty.
 //
-//   Column order (39 columns):
+//   Column order (37 columns):
 //     sample_type, session_time_s, wall_ms,
 //     // event-specific
 //     event_name, event_payload,
@@ -42,13 +43,14 @@ using UnityEngine;
 //     // system-specific (1 Hz)
 //     battery_pct, voltage_mv, current_ma, battery_temp_c, thermal_status,
 //     // ovr-specific (1 Hz)
-//     cpu_level, gpu_level, app_fps, headroom,
+//     cpu_level, gpu_level,
 //     // meta-specific (session header)
 //     study_phase, participant_id, headset_id, architecture, environment,
 //     network_profile, build_sha
 //
 // FILE LOCATION:
-//   Application.persistentDataPath / metrics_<UTC-timestamp>.csv
+//   Application.persistentDataPath / metrics_[portNNNN_]<UTC-timestamp>.csv
+//   (edge builds include the connected server port, e.g. metrics_port9901_*.csv)
 //   On Quest: /sdcard/Android/data/<package>/files/metrics_*.csv
 //   Pull with:  adb pull /sdcard/Android/data/<package>/files/ ~/Desktop/
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,9 +71,42 @@ namespace Monasha.Metrics
             DontDestroyOnLoad(gameObject);
         }
 
+        // Optional filename tag (e.g. "port9901") so each headset's CSV is
+        // identifiable when several run at once. Set by EdgeServerClient once it
+        // knows which server instance it connected to.
+        private string fileTag = "";
+        public void SetFileTag(string tag) => fileTag = tag ?? "";
+
+        [Header("Auto-start")]
+        [Tooltip("In edge mode the session waits this many seconds for the client " +
+                 "to connect (so the CSV filename can include the server port) " +
+                 "before starting anyway. Standalone mode starts immediately.")]
+        [SerializeField] private float edgeConnectTimeoutSec = 10f;
+
         private void Start()
         {
-            // Force session to start automatically on every run
+            // Auto-start recording on every run. In edge mode, wait briefly for
+            // the port tag so the filename carries it (see AutoStartRoutine).
+            StartCoroutine(AutoStartRoutine());
+        }
+
+        private IEnumerator AutoStartRoutine()
+        {
+            var arch = ArchitectureManager.Instance;
+            bool edge = arch != null && arch.IsEdge;
+
+            if (edge)
+            {
+                // Hold off until EdgeServerClient reports its port (SetFileTag),
+                // or the timeout elapses (server never came up → start untagged).
+                float waited = 0f;
+                while (string.IsNullOrEmpty(fileTag) && waited < edgeConnectTimeoutSec)
+                {
+                    waited += Time.unscaledDeltaTime;
+                    yield return null;
+                }
+            }
+
             if (!sessionActive) StartSession();
         }
 
@@ -166,7 +201,8 @@ namespace Monasha.Metrics
             }
 
             string timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
-            currentFilePath  = Path.Combine(Application.persistentDataPath, $"metrics_{timestamp}.csv");
+            string tagPart   = string.IsNullOrEmpty(fileTag) ? "" : fileTag + "_";
+            currentFilePath  = Path.Combine(Application.persistentDataPath, $"metrics_{tagPart}{timestamp}.csv");
 
             try
             {
@@ -182,7 +218,7 @@ namespace Monasha.Metrics
                     "vertex_count,triangle_count,pos_drift_m,rot_drift_deg,discarded,server_ts_ms," +
                     "server_total_ms,server_parse_ms,server_integrate_ms,server_mesh_ms," +
                     "battery_pct,voltage_mv,current_ma,battery_temp_c,thermal_status," +
-                    "cpu_level,gpu_level,app_fps,headroom," +
+                    "cpu_level,gpu_level," +
                     "study_phase,participant_id,headset_id,architecture,environment," +
                     "network_profile,build_sha"
                 );
@@ -249,7 +285,7 @@ namespace Monasha.Metrics
             EmptyN(3);    // frame_time_ms, fps, display_hz
             EmptyN(15);   // mesh columns (rtt..server_mesh_ms)
             EmptyN(5);    // system columns
-            EmptyN(4);    // ovr columns
+            EmptyN(2);    // ovr columns
             Col(studyPhase);
             Col(participantId);
             Col(headsetId);
@@ -275,7 +311,7 @@ namespace Monasha.Metrics
             Col(displayHz);                      // display_hz
             EmptyN(15);                          // mesh cols
             EmptyN(5);                           // system cols
-            EmptyN(4);                           // ovr cols
+            EmptyN(2);                           // ovr cols
             EmptyN(7);                           // meta cols
 
             writer.WriteLine(sb.ToString());
@@ -329,7 +365,7 @@ namespace Monasha.Metrics
             Col(serverIntegrateMs);              // server_integrate_ms
             Col(serverMeshMs);                   // server_mesh_ms
             EmptyN(5);                           // system cols
-            EmptyN(4);                           // ovr cols
+            EmptyN(2);                           // ovr cols
             EmptyN(7);                           // meta cols
 
             writer.WriteLine(sb.ToString());
@@ -389,17 +425,19 @@ namespace Monasha.Metrics
             Col(currentMa);                      // current_ma
             Col(batteryTempC);                   // battery_temp_c
             Col(thermalStatus);                  // thermal_status
-            EmptyN(4);                           // ovr cols
+            EmptyN(2);                           // ovr cols
             EmptyN(7);                           // meta cols
 
             writer.WriteLine(sb.ToString());
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // LogOvrSample — 1 Hz OVR perf metrics row.
-        // Called by OvrPerfCollector. headroom = 1 - usedFrameTime/budget.
+        // LogOvrSample — 1 Hz OVR perf-tier row (cpu_level, gpu_level).
+        // Called by OvrPerfCollector. app_fps/headroom were removed: under the
+        // OpenXR backend GetAppFramerate() returns 0, and headroom was just a
+        // restatement of frame_time_ms — use the `frame` rows for fps/frame time.
         // ─────────────────────────────────────────────────────────────────────
-        public void LogOvrSample(int cpuLevel, int gpuLevel, float appFps, float headroom)
+        public void LogOvrSample(int cpuLevel, int gpuLevel)
         {
             if (!sessionActive || writer == null) return;
 
@@ -410,8 +448,6 @@ namespace Monasha.Metrics
             EmptyN(5);                           // system cols
             Col(cpuLevel);                       // cpu_level
             Col(gpuLevel);                       // gpu_level
-            Col(appFps);                         // app_fps
-            Col(headroom);                       // headroom
             EmptyN(7);                           // meta cols
 
             writer.WriteLine(sb.ToString());
@@ -439,7 +475,7 @@ namespace Monasha.Metrics
             EmptyN(3);                           // frame cols
             EmptyN(15);                          // mesh cols
             EmptyN(5);                           // system cols
-            EmptyN(4);                           // ovr cols
+            EmptyN(2);                           // ovr cols
             EmptyN(7);                           // meta cols
 
             writer.WriteLine(sb.ToString());

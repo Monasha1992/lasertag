@@ -93,8 +93,27 @@ namespace Monasha.EdgeServer
                  "the Unity Editor (Link); otherwise set to the Mac's LAN IP.")]
         [SerializeField] private string serverIP       = "127.0.0.1";
 
-        [Tooltip("TCP port the Mac server listens on. Must match EdgeMetalServer's port (9876).")]
-        [SerializeField] private int    serverPort     = 9876;
+        [Tooltip("First port to try. Each Mac server instance serves ONE headset; " +
+                 "the client scans upward from here (basePort, basePort+1, …) until it " +
+                 "finds a free instance. Must match the ports the EdgeMetalServer " +
+                 "instances are launched on (default base 9900).")]
+        [SerializeField] private int    basePort       = 9900;
+
+        [Tooltip("How many consecutive ports to scan from basePort before wrapping " +
+                 "back to basePort and retrying. Set to the max number of server " +
+                 "instances you run on the Mac.")]
+        [SerializeField] private int    maxServersToScan = 8;
+
+        [Tooltip("Seconds to wait for the server's 1-byte 'hello' that confirms the " +
+                 "instance is free (not busy). On timeout the client treats the port " +
+                 "as busy/unavailable and moves to the next one.")]
+        [SerializeField] private int    handshakeTimeoutMs = 800;
+
+        // The port this client actually connected to (−1 until connected).
+        // Surfaced for the metrics filename and HUD.
+        public static int ConnectedPort { get; private set; } = -1;
+        private int connectedPort = -1;
+        private int scanPort;   // port currently being attempted by ConnectLoop
 
         [Header("Send pacing")]
         [Tooltip("Minimum seconds between outgoing depth frames. " +
@@ -427,49 +446,94 @@ namespace Monasha.EdgeServer
             // explaining gaps in mesh-row cadence around Wi-Fi blips.
             MetricsLogger.Instance?.LogEvent(
                 connected ? "edge_connect" : "edge_disconnect",
-                $"{serverIP}:{serverPort}");
+                $"{serverIP}:{connectedPort}");
 
             try { ConnectionStatusChanged?.Invoke(connected); }
             catch (Exception e) { Debug.LogError($"[EdgeServerClient] ConnectionStatusChanged handler threw: {e}"); }
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // ConnectLoop — Retries the TCP connection until it succeeds
+        // ConnectLoop — Scans ports until a FREE server instance is found
         //
-        // On first failure (Mac not yet running) we keep retrying every
-        // `reconnectIntervalSec` so the Quest scene doesn't require the Mac
-        // to be up first. Also re-entered from Update() when the reader thread
-        // reports a mid-session disconnect. Exits on success or when
-        // autoReconnect is disabled — but the disconnected error banner stays
-        // visible so the user knows the system isn't running.
+        // Each Mac instance serves one headset, so the client walks the port
+        // range basePort … basePort+maxServersToScan-1, wrapping around, until
+        // an instance accepts it (greets with the hello byte). A port that is
+        // busy (another headset is on it) or has no server is skipped. Retries
+        // forever while autoReconnect is on, so headsets can boot in any order.
+        // Also re-entered from Update() after a mid-session disconnect.
         // ─────────────────────────────────────────────────────────────────────
         private IEnumerator ConnectLoop()
         {
+            scanPort = basePort;
             while (!IsConnected)
             {
-                bool ok = TryConnect();
-                if (ok) yield break;
+                ConnectResult r = TryConnect(scanPort);
+                if (r == ConnectResult.Accepted) yield break;
+
+                // Busy or no-server → advance to the next port (wrap around).
+                if (r == ConnectResult.Busy && verboseLogging)
+                    Debug.Log($"[EdgeServerClient] Port {scanPort} busy — trying next.");
+                scanPort++;
+                if (scanPort >= basePort + maxServersToScan) scanPort = basePort;
+
                 if (!autoReconnect) yield break;
                 yield return new WaitForSeconds(reconnectIntervalSec);
             }
         }
 
-        // Attempts a single TCP connection. Returns true on success and starts
-        // the reader thread. Returns false (and logs an error) on failure —
-        // the on-device meshing path is intentionally NOT activated as a
-        // fallback, so the user sees the disconnected banner instead.
-        private bool TryConnect()
+        private enum ConnectResult { Accepted, Busy, NoServer }
+
+        // Attempts one port. Returns:
+        //   Accepted — TCP connected AND the server greeted us (instance free);
+        //              starts the reader thread and commits the connection.
+        //   Busy     — TCP connected but no/!=hello greeting (instance taken).
+        //   NoServer — TCP connect failed (nothing listening on that port).
+        // The on-device meshing path is intentionally NOT used as a fallback —
+        // the user sees the disconnected banner until a free instance is found.
+        private ConnectResult TryConnect(int port)
         {
+            TcpClient c = null;
             try
             {
-                client = new TcpClient(serverIP, serverPort);
-                stream = client.GetStream();
+                c = new TcpClient(serverIP, port);   // throws if nothing is listening
+            }
+            catch (Exception e)
+            {
+                c?.Close();
+                if (verboseLogging)
+                    Debug.Log($"[EdgeServerClient] No server on {serverIP}:{port} ({e.Message})");
+                return ConnectResult.NoServer;
+            }
 
-                // Reset the reader-exit flag from any previous disconnect.
+            try
+            {
+                NetworkStream s = c.GetStream();
+
+                // ── Handshake: free instances greet with one hello byte (0xAA) ─
+                // A busy instance cancels the connection without greeting, so the
+                // read returns -1 (EOF) or times out → treat as Busy and scan on.
+                s.ReadTimeout = handshakeTimeoutMs;
+                int hello = s.ReadByte();
+                if (hello != 0xAA)
+                {
+                    c.Close();
+                    return ConnectResult.Busy;
+                }
+                s.ReadTimeout = Timeout.Infinite;    // reader thread blocks normally
+
+                // ── Commit the connection ─────────────────────────────────────
+                client = c;
+                stream = s;
+                connectedPort = port;
+                ConnectedPort = port;
+
+                // Tag the metrics file with the port so each headset's CSV is
+                // identifiable (MetricsLogger waits for this before auto-starting
+                // the session in edge mode).
+                MetricsLogger.Instance?.SetFileTag($"port{port}");
+
                 readerExited     = false;
                 readerShouldStop = false;
-
-                // Spin up the background reader.
                 readerThread = new Thread(ReaderLoop)
                 {
                     IsBackground = true,
@@ -478,18 +542,16 @@ namespace Monasha.EdgeServer
                 readerThread.Start();
 
                 SetConnectedState(true);
-                Debug.Log($"[EdgeServerClient] Connected to {serverIP}:{serverPort}");
-                return true;
+                Debug.Log($"[EdgeServerClient] Connected to {serverIP}:{port}");
+                return ConnectResult.Accepted;
             }
             catch (Exception e)
             {
-                // LogError (not LogWarning) so the failure is visible without
-                // verboseLogging. We don't fall back to on-device meshing —
-                // the user must start the Mac server.
-                Debug.LogError($"[EdgeServerClient] Cannot reach edge server at {serverIP}:{serverPort} — " +
-                               $"start EdgeMetalServer on the Mac. Auto-retry in {reconnectIntervalSec}s. " +
-                               $"({e.Message})");
-                return false;
+                // Greeting read failed/timed out — instance is busy or not ready.
+                c?.Close();
+                if (verboseLogging)
+                    Debug.Log($"[EdgeServerClient] No greeting from {serverIP}:{port} ({e.Message}) — busy.");
+                return ConnectResult.Busy;
             }
         }
 
