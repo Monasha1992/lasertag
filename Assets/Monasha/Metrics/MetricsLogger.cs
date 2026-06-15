@@ -77,6 +77,11 @@ namespace Monasha.Metrics
         private string fileTag = "";
         public void SetFileTag(string tag) => fileTag = tag ?? "";
 
+        // Set true by MeasurementController (button-B trigger) so the session is
+        // started by the trigger, not auto-started here. Left false otherwise so
+        // standalone-only setups keep recording automatically.
+        public static bool ManualStart = false;
+
         [Header("Auto-start")]
         [Tooltip("In edge mode the session waits this many seconds for the client " +
                  "to connect (so the CSV filename can include the server port) " +
@@ -92,6 +97,9 @@ namespace Monasha.Metrics
 
         private IEnumerator AutoStartRoutine()
         {
+            // A MeasurementController (button B) owns start/stop — don't auto-start.
+            if (ManualStart) yield break;
+
             var arch = ArchitectureManager.Instance;
             bool edge = arch != null && arch.IsEdge;
 

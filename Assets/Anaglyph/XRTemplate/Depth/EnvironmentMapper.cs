@@ -92,6 +92,13 @@ namespace Anaglyph.XRTemplate
 		
 		public static bool UseEdgeServer { get; set; }
 
+		// Gate for the manual start/stop trigger (Monasha.Metrics.MeasurementController,
+		// bound to controller button B). Defaults to TRUE so behaviour is unchanged
+		// when no trigger is present; the trigger sets it false at boot and flips it
+		// on/off per run. Both depth paths honour it: standalone integration/meshing
+		// in UpdateLoop below, and edge depth sending in EdgeServerClient.OnDepthUpdated.
+		public static bool MeasurementActive = true;
+
 		private void Awake()
 		{
 			Instance = this;
@@ -167,6 +174,11 @@ namespace Anaglyph.XRTemplate
 					await Awaitable.WaitForSecondsAsync(1 / updateFrequency, ctkn);
 
 					if (!DepthKitDriver.DepthAvailable) continue;
+
+					// Wait for the start trigger (button B). Depth keeps being
+					// acquired upstream; we just don't integrate/mesh until a run
+					// is active, so a run begins from a clean slate.
+					if (!MeasurementActive) continue;
 
 					if (frustumVolume == null) Setup();
 

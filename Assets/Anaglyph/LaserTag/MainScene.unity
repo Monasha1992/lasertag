@@ -589,10 +589,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 14b05f0250eac44c98ed2ad87aa5e042, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Monasha.EdgeServer.EdgeServerClient
-  serverIP: 192.168.50.99
+  serverIP: 192.168.50.50
   basePort: 9900
   maxServersToScan: 8
   handshakeTimeoutMs: 800
+  connectTimeoutMs: 500
   minSendInterval: 0.1
   posDiscardThreshold: 0.15
   rotDiscardThreshold: 15
@@ -1253,6 +1254,7 @@ GameObject:
   - component: {fileID: 1881734021}
   - component: {fileID: 1881734022}
   - component: {fileID: 1881734023}
+  - component: {fileID: 1881734024}
   m_Layer: 0
   m_Name: MetricsRoot
   m_TagString: Untagged
@@ -1337,6 +1339,27 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1e658a1597ca14283bab1138cc945b15, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.GameEventCollector
+--- !u!114 &1881734024
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1881734007}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 81aa87c7c727f479e8e34395602de50b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.MeasurementController
+  buttonBinding: <XRController>{RightHand}/secondaryButton
+  freshStart: 1
+  runActive: 0
+  onRunStarted:
+    m_PersistentCalls:
+      m_Calls: []
+  onRunStopped:
+    m_PersistentCalls:
+      m_Calls: []
 --- !u!1001 &3916737362139618993
 PrefabInstance:
   m_ObjectHideFlags: 0

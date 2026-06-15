@@ -109,11 +109,22 @@ namespace Monasha.EdgeServer
                  "as busy/unavailable and moves to the next one.")]
         [SerializeField] private int    handshakeTimeoutMs = 800;
 
+        [Tooltip("Milliseconds to wait for the TCP connect to a port before treating " +
+                 "it as 'no server here' and scanning on.")]
+        [SerializeField] private int    connectTimeoutMs = 500;
+
         // The port this client actually connected to (−1 until connected).
         // Surfaced for the metrics filename and HUD.
         public static int ConnectedPort { get; private set; } = -1;
         private int connectedPort = -1;
         private int scanPort;   // port currently being attempted by ConnectLoop
+
+        // Background-connect handoff. All socket connect/handshake I/O runs on a
+        // worker thread so the main thread never stalls during the port scan;
+        // the coroutine polls connectResult. 0=pending, 1=accepted, 2=busy, 3=no-server.
+        private volatile int connectResult;
+        private TcpClient     pendingClient;
+        private NetworkStream pendingStream;
 
         [Header("Send pacing")]
         [Tooltip("Minimum seconds between outgoing depth frames. " +
@@ -403,7 +414,7 @@ namespace Monasha.EdgeServer
             EnvironmentMapper.UseEdgeServer = true;
 
             // Show the "not connected" banner immediately. ConnectLoop will
-            // hide it once TryConnect succeeds.
+            // hide it once a free instance is connected.
             SetConnectedState(false);
 
             // Subscribe to the depth sensor — fires every time a new depth frame
@@ -427,7 +438,7 @@ namespace Monasha.EdgeServer
         //   connected = true  → hide error banner, fire ConnectionStatusChanged(true)
         //   connected = false → show error banner, fire ConnectionStatusChanged(false)
         //
-        // Called from TryConnect on success, from Update() when the reader
+        // Called from CommitConnection on success, from Update() when the reader
         // thread reports a disconnect, and from Start() to set the initial
         // "not yet connected" state.
         // ─────────────────────────────────────────────────────────────────────
@@ -467,12 +478,29 @@ namespace Monasha.EdgeServer
             scanPort = basePort;
             while (!IsConnected)
             {
-                ConnectResult r = TryConnect(scanPort);
-                if (r == ConnectResult.Accepted) yield break;
+                int port = scanPort;
+                connectResult = 0;
+                pendingClient = null;
+                pendingStream = null;
+
+                // Do the blocking connect + handshake on a WORKER thread so the
+                // main thread (and rendering) never stalls during the scan.
+                var t = new Thread(() => ConnectAttempt(port))
+                { IsBackground = true, Name = "EdgeServerConnect" };
+                t.Start();
+
+                // Poll the worker without blocking — one frame per iteration.
+                while (connectResult == 0) yield return null;
+
+                if (connectResult == 1)            // accepted (got the hello byte)
+                {
+                    CommitConnection(port);
+                    yield break;
+                }
+                if (connectResult == 2 && verboseLogging)
+                    Debug.Log($"[EdgeServerClient] Port {port} busy — trying next.");
 
                 // Busy or no-server → advance to the next port (wrap around).
-                if (r == ConnectResult.Busy && verboseLogging)
-                    Debug.Log($"[EdgeServerClient] Port {scanPort} busy — trying next.");
                 scanPort++;
                 if (scanPort >= basePort + maxServersToScan) scanPort = basePort;
 
@@ -481,78 +509,64 @@ namespace Monasha.EdgeServer
             }
         }
 
-        private enum ConnectResult { Accepted, Busy, NoServer }
-
-        // Attempts one port. Returns:
-        //   Accepted — TCP connected AND the server greeted us (instance free);
-        //              starts the reader thread and commits the connection.
-        //   Busy     — TCP connected but no/!=hello greeting (instance taken).
-        //   NoServer — TCP connect failed (nothing listening on that port).
-        // The on-device meshing path is intentionally NOT used as a fallback —
-        // the user sees the disconnected banner until a free instance is found.
-        private ConnectResult TryConnect(int port)
+        // Runs on a BACKGROUND thread. Socket I/O only — NO Unity API calls here.
+        // Sets connectResult: 1 accepted, 2 busy (connected but no hello), 3 no-server.
+        private void ConnectAttempt(int port)
         {
             TcpClient c = null;
             try
             {
-                c = new TcpClient(serverIP, port);   // throws if nothing is listening
-            }
-            catch (Exception e)
-            {
-                c?.Close();
-                if (verboseLogging)
-                    Debug.Log($"[EdgeServerClient] No server on {serverIP}:{port} ({e.Message})");
-                return ConnectResult.NoServer;
-            }
+                c = new TcpClient();
+                var ar = c.BeginConnect(serverIP, port, null, null);
+                if (!ar.AsyncWaitHandle.WaitOne(connectTimeoutMs))
+                {
+                    try { c.Close(); } catch { }
+                    connectResult = 3; return;       // connect timed out → no server
+                }
+                c.EndConnect(ar);
 
-            try
-            {
                 NetworkStream s = c.GetStream();
-
-                // ── Handshake: free instances greet with one hello byte (0xAA) ─
-                // A busy instance cancels the connection without greeting, so the
-                // read returns -1 (EOF) or times out → treat as Busy and scan on.
+                // Free instances greet with one hello byte (0xAA); a busy instance
+                // cancels without greeting → read times out / returns -1.
                 s.ReadTimeout = handshakeTimeoutMs;
                 int hello = s.ReadByte();
                 if (hello != 0xAA)
                 {
-                    c.Close();
-                    return ConnectResult.Busy;
+                    try { c.Close(); } catch { }
+                    connectResult = 2; return;       // busy / not greeted
                 }
                 s.ReadTimeout = Timeout.Infinite;    // reader thread blocks normally
 
-                // ── Commit the connection ─────────────────────────────────────
-                client = c;
-                stream = s;
-                connectedPort = port;
-                ConnectedPort = port;
-
-                // Tag the metrics file with the port so each headset's CSV is
-                // identifiable (MetricsLogger waits for this before auto-starting
-                // the session in edge mode).
-                MetricsLogger.Instance?.SetFileTag($"port{port}");
-
-                readerExited     = false;
-                readerShouldStop = false;
-                readerThread = new Thread(ReaderLoop)
-                {
-                    IsBackground = true,
-                    Name         = "EdgeServerReader",
-                };
-                readerThread.Start();
-
-                SetConnectedState(true);
-                Debug.Log($"[EdgeServerClient] Connected to {serverIP}:{port}");
-                return ConnectResult.Accepted;
+                pendingClient = c;
+                pendingStream = s;
+                connectResult = 1;                   // accepted (release: pending* visible)
             }
-            catch (Exception e)
+            catch (Exception)
             {
-                // Greeting read failed/timed out — instance is busy or not ready.
-                c?.Close();
-                if (verboseLogging)
-                    Debug.Log($"[EdgeServerClient] No greeting from {serverIP}:{port} ({e.Message}) — busy.");
-                return ConnectResult.Busy;
+                try { c?.Close(); } catch { }
+                connectResult = 3;                   // refused / unreachable
             }
+        }
+
+        // Runs on the MAIN thread (from the coroutine) once a free instance greeted
+        // us — safe to touch Unity objects / fire events here.
+        private void CommitConnection(int port)
+        {
+            client = pendingClient;
+            stream = pendingStream;
+            connectedPort = port;
+            ConnectedPort = port;
+
+            // Tag the metrics file with the port so each headset's CSV is identifiable.
+            MetricsLogger.Instance?.SetFileTag($"port{port}");
+
+            readerExited     = false;
+            readerShouldStop = false;
+            readerThread = new Thread(ReaderLoop) { IsBackground = true, Name = "EdgeServerReader" };
+            readerThread.Start();
+
+            SetConnectedState(true);
+            Debug.Log($"[EdgeServerClient] Connected to {serverIP}:{port}");
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -1074,6 +1088,11 @@ namespace Monasha.EdgeServer
         private void OnDepthUpdated()
         {
             if (stream == null) return;
+
+            // Wait for the start trigger (button B / MeasurementController). The
+            // TCP connection stays up, but we don't stream depth — so no meshing
+            // happens until a run is started, and each run begins fresh.
+            if (!EnvironmentMapper.MeasurementActive) return;
 
             // Pacing: don't send faster than minSendInterval
             if (Time.realtimeSinceStartup - lastSendTime < minSendInterval) return;
