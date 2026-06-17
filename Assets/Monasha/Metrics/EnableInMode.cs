@@ -78,4 +78,19 @@ namespace Monasha.Metrics
     {
         protected override ArchitectureMode RequiredMode => ArchitectureMode.Edge;
     }
+
+    /// <summary>
+    /// Add to a GameObject that should ONLY be active in the USER STUDY build
+    /// (StudyMode.UserStudy) — e.g. the moving-target root. In a Quantitative
+    /// build (the default), or with no StudyModeManager present, it deactivates
+    /// itself in Awake. Orthogonal to ArchitectureMode.
+    /// </summary>
+    public class EnableInUserStudy : MonoBehaviour
+    {
+        private void Awake()
+        {
+            if (!StudyModeManager.IsUserStudy)
+                gameObject.SetActive(false);
+        }
+    }
 }

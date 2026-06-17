@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Anaglyph.DepthKit;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -334,6 +335,12 @@ namespace Monasha.EdgeServer
             entry.renderer.enabled        = false;        // until geometry arrives
             entry.collider.convex         = false;        // room geometry is non-convex
             entry.collider.cookingOptions = FastCookingOptions;
+
+            // Register with the occlusion feature so edge chunks hide virtual
+            // content, exactly like the standalone Chunk prefab does. Without
+            // this the edge path never occludes virtual objects (they render
+            // straight through real geometry) — required for the user study.
+            go.AddComponent<OcclusionMesh>();
 
             return entry;
         }

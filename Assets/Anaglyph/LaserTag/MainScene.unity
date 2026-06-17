@@ -589,7 +589,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 14b05f0250eac44c98ed2ad87aa5e042, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Monasha.EdgeServer.EdgeServerClient
-  serverIP: 192.168.50.50
+  serverIP: 192.168.50.99
   basePort: 9900
   maxServersToScan: 8
   handshakeTimeoutMs: 800

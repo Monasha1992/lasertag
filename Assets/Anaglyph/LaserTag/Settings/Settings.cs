@@ -20,7 +20,9 @@ namespace Anaglyph.Lasertag
 
 		private void Start()
 		{
-			drawScanMesh.Value = true;
+			// Show the reconstructed mesh by default, but HIDE it in the user-study
+			// build so participants judge by interaction only (StudyModeManager).
+			drawScanMesh.Value = !Monasha.Metrics.StudyModeManager.IsUserStudy;
 
 			aprilTagColocation.AddChangeListenerAndCheck(b =>
 			{
