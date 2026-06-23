@@ -1,12 +1,16 @@
 using UnityEngine;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EnableInMode.cs — Per-GameObject self-toggle based on ArchitectureMode
+// EnableInMode.cs — Shared base for per-GameObject architecture self-toggles
 //
 // WHAT THIS FILE DOES:
-//   Defines two tiny MonoBehaviours, EnableInStandalone and EnableInEdge,
-//   that check ArchitectureManager.Instance.Mode in their own Awake() and
-//   deactivate their parent GameObject if the mode doesn't match.
+//   Defines the abstract EnableInModeBase used by the concrete components
+//   EnableInStandalone and EnableInEdge (each in its own file — Unity only
+//   exposes a MonoBehaviour in Add Component when the file name matches the
+//   class name, so they cannot share this file). Each concrete component
+//   checks ArchitectureManager.Instance.Mode in its Awake() (via this base)
+//   and deactivates its GameObject if the mode doesn't match.
+//   EnableInUserStudy (StudyMode toggle) lives in its own file too.
 //
 // WHY:
 //   ArchitectureManager has Inspector arrays for toggling scene-level
@@ -56,41 +60,6 @@ namespace Monasha.Metrics
             {
                 gameObject.SetActive(false);
             }
-        }
-    }
-
-    /// <summary>
-    /// Add to a GameObject that should ONLY be active in Standalone mode.
-    /// Typically attached to ChunkManager and the chunk-parent root.
-    /// In Edge mode, this GameObject is deactivated in its Awake().
-    /// </summary>
-    public class EnableInStandalone : EnableInModeBase
-    {
-        protected override ArchitectureMode RequiredMode => ArchitectureMode.Standalone;
-    }
-
-    /// <summary>
-    /// Add to a GameObject that should ONLY be active in Edge mode.
-    /// Typically attached to EdgeServerClient and the EdgeMesh GameObject.
-    /// In Standalone mode, this GameObject is deactivated in its Awake().
-    /// </summary>
-    public class EnableInEdge : EnableInModeBase
-    {
-        protected override ArchitectureMode RequiredMode => ArchitectureMode.Edge;
-    }
-
-    /// <summary>
-    /// Add to a GameObject that should ONLY be active in the USER STUDY build
-    /// (StudyMode.UserStudy) — e.g. the moving-target root. In a Quantitative
-    /// build (the default), or with no StudyModeManager present, it deactivates
-    /// itself in Awake. Orthogonal to ArchitectureMode.
-    /// </summary>
-    public class EnableInUserStudy : MonoBehaviour
-    {
-        private void Awake()
-        {
-            if (!StudyModeManager.IsUserStudy)
-                gameObject.SetActive(false);
         }
     }
 }
