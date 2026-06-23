@@ -54,6 +54,12 @@ namespace Monasha.Metrics
         [SerializeField] private float hideSeconds = 0.4f;
         [SerializeField] private Color flashColor = Color.white;
 
+        // Raised when this target is shot. TargetSpawner subscribes to relocate
+        // the target to a new (seeded) position on hit. Null when the target is
+        // placed by hand rather than spawned — the fixed-path behaviour is
+        // unchanged in that case.
+        public event System.Action<MovingTarget> Hit;
+
         private Vector3  origin;
         private Renderer rend;
         private Collider col;
@@ -96,6 +102,26 @@ namespace Monasha.Metrics
         {
             flashUntil  = Time.time + flashSeconds;
             hiddenUntil = Time.time + hideSeconds;
+            Hit?.Invoke(this);
+        }
+
+        // ── Spawner hooks (used by TargetSpawner; no-ops for hand-placed targets) ──
+
+        /// <summary>Move the oscillation centre to a new world position. The
+        /// target is briefly hidden right after a hit, so relocating here makes
+        /// it reappear at the new spot with no visible pop.</summary>
+        public void Relocate(Vector3 newOrigin)
+        {
+            transform.position = newOrigin;
+            origin = newOrigin;
+        }
+
+        /// <summary>Set the motion phase (seconds) so spawned targets don't move
+        /// in lockstep. Kept deterministic by the spawner's seeded RNG.</summary>
+        public void SetPhase(float seconds)
+        {
+            phaseOffset = seconds;
+            startTime   = Time.time + phaseOffset;
         }
     }
 }
