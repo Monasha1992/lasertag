@@ -6,10 +6,15 @@ using UnityEngine;
 //
 // WHAT THIS FILE DOES:
 //   A benign, software-controlled moving target the participant shoots. Unlike
-//   the game's Zombie NPCs it doesn't chase or fight — it just moves on a fixed,
-//   repeatable path (identical for every participant and condition) and gives a
-//   quick flash/vanish when hit. NO metrics are logged — this is the qualitative
-//   user-study task; outcomes are captured by surveys (Likert / NASA-TLX).
+//   the game's Zombie NPCs it doesn't chase or fight — it moves on a fixed,
+//   repeatable path and gives a quick flash/vanish when hit. NO metrics are
+//   logged — this is the qualitative user-study task; outcomes are captured by
+//   surveys (Likert / NASA-TLX).
+//
+//   It can be hand-placed (fixed path) OR spawned by TargetSpawner, which uses
+//   the Hit event + Relocate()/SetPhase() hooks below to drop N targets at
+//   seeded-random positions and relocate them on hit. Either way the per-target
+//   motion is deterministic, so it stays identical across participants/conditions.
 //
 //   The point of the task: as the experimenter moves a REAL obstacle into the
 //   targets' path, the reconstruction must OCCLUDE the target (hide it) and
@@ -19,12 +24,15 @@ using UnityEngine;
 //   the engine's occlusion feature against the room mesh — see OcclusionMesh /
 //   the edge fix in EdgeChunkStore — not by this script.)
 //
-// SETUP (Editor):
-//   - Make a small GameObject with a visible mesh (e.g. a Sphere ~0.15 m) and a
-//     non-trigger Collider, on the **Default** layer (so bullets hit it and the
-//     occlusion feature can hide it — do NOT put it on the "Chunk" layer).
-//   - Add this component. Place 1–3 in front of the participant under a root that
-//     has EnableInUserStudy (so they exist only in user-study builds).
+// SETUP (Editor) — two ways to place targets:
+//   • Spawned (recommended): make the target a PREFAB — a small mesh (Sphere
+//     ~0.15 m), a non-trigger Collider, and an OCCLUDED material (e.g. Zombie.mat,
+//     so the room mesh can hide it). Assign it to a TargetSpawner, which
+//     instantiates N at seeded-random positions and relocates them on hit.
+//   • Hand-placed: drop 1–3 into the scene under a root with EnableInUserStudy
+//     (so they exist only in user-study builds).
+//   In BOTH cases use the **Default** layer — so bullets hit it and the occlusion
+//   feature can hide it. Do NOT use the "Chunk" layer.
 // ─────────────────────────────────────────────────────────────────────────────
 
 namespace Monasha.Metrics

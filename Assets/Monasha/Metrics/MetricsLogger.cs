@@ -49,7 +49,8 @@ using UnityEngine;
 //     network_profile, build_sha
 //
 // FILE LOCATION:
-//   Application.persistentDataPath / metrics_[portNNNN_]<UTC-timestamp>.csv
+//   Application.persistentDataPath / metrics_[portNNNN_]<local-timestamp>.csv
+//   (filename uses device LOCAL time; the per-row `timestamp` column is UTC epoch-ms)
 //   (edge builds include the connected server port, e.g. metrics_port9901_*.csv)
 //   On Quest: /sdcard/Android/data/<package>/files/metrics_*.csv
 //   Pull with:  adb pull /sdcard/Android/data/<package>/files/ ~/Desktop/
@@ -208,7 +209,10 @@ namespace Monasha.Metrics
                 return;
             }
 
-            string timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+            // Device LOCAL time for the filename only (human-friendly when
+            // pulling files). The per-row `timestamp` column below stays UTC
+            // epoch-ms so the Quest↔Mac join is unaffected.
+            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
             string tagPart   = string.IsNullOrEmpty(fileTag) ? "" : fileTag + "_";
             currentFilePath  = Path.Combine(Application.persistentDataPath, $"metrics_{tagPart}{timestamp}.csv");
 
