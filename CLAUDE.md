@@ -20,7 +20,7 @@ Research questions: RQ1 on-device limits (battery/thermal/frame-time/UX) · RQ2 
 ## Architecture switch & dual builds
 
 - `Assets/Monasha/Metrics/ArchitectureManager.cs` selects the mode: `EDGE_BUILD` / `STANDALONE_BUILD` scripting defines override the Inspector value; sets `EnvironmentMapper.UseEdgeServer`; logs a boot banner (grep `ArchitectureManager` in `adb logcat`).
-- The user ALSO flips ProjectSettings per build (productName + Android package id `com.monasha.lasertag_edge` vs `com.monasha.lasertag_standalone`) so both APKs coexist on one headset.
+- The user ALSO flips ProjectSettings per build (productName + Android package id) so the APKs coexist on one headset. Four ids exist, **dot-separated**: `com.monasha.lasertag.edge`, `com.monasha.lasertag.stand`, plus `.edge.us` / `.stand.us` for the `USER_STUDY_BUILD` variants.
 - `EnableInStandalone` / `EnableInEdge` components (`Assets/Monasha/Metrics/EnableInMode.cs`) self-disable GameObjects per mode.
 
 ## Key files
@@ -28,7 +28,7 @@ Research questions: RQ1 on-device limits (battery/thermal/frame-time/UX) · RQ2 
 | File | Role |
 |---|---|
 | `Assets/Monasha/EdgeServer/EdgeServerClient.cs` | Edge client: depth send (10 Hz, one-in-flight), reader thread, 0x03/0x04 handling |
-| `Assets/Monasha/EdgeServer/EdgeChunkStore.cs` | Client-side chunk cache (persistence) — dictionary of 3.2 m grid-cell meshes + colliders |
+| `Assets/Monasha/EdgeServer/EdgeChunkStore.cs` | Client-side chunk cache (persistence) — dictionary of 3.2 m grid-cell meshes + colliders. **Edge cells are 3.2 m (`chunkSizeVox=32` × 0.1 m); standalone `ChunkManager` chunks are 5 m — two separate systems, don't conflate.** |
 | `Assets/Monasha/Metrics/MetricsLogger.cs` (+ collectors in same folder) | Multi-row-type CSV telemetry (frame/mesh/system/ovr/event) for the study |
 | `Assets/Anaglyph/XRTemplate/Depth/EnvironmentMapper.cs` | TSDF volume owner (both modes); local integration (standalone) |
 | `Assets/Anaglyph/XRTemplate/Depth/Meshing/ChunkManager.cs` | Standalone chunk meshing (CPU/Burst) |
@@ -41,7 +41,9 @@ Research questions: RQ1 on-device limits (battery/thermal/frame-time/UX) · RQ2 
 
 ## Current state (verified 2026-06-12)
 
-- **A performance regression is live in the chunked edge path** (slow meshing, freezes). The complete fix spec — paste-ready code the user will apply himself — is in **`../docs/13-pending-perf-fix.md`**. Partial: state fields already sit uncommitted in `MetalPipeline.swift`; everything else (batched single-command-buffer dispatch, empty-chunk backoff, Quest bake rate-limit, capacity-headroom buffers, `updateDistance` 6→3 revert) is pending.
+- **The chunked-path perf fix is applied** (verified 2026-08-29): empty-chunk backoff is in `MetalPipeline.swift`, `updateDistance` is 3 in `MainScene.unity`, and the Quest bake rate-limit is `colliderUpdateInterval = 3`. Server compute now runs at a **4.78 ms median**. `../docs/13-pending-perf-fix.md` is historical — do not treat its items as outstanding.
+- **Live defect: the server emits out-of-range mesh indices** — 16.8 % of chunk responses in the 2026-08-29 rig run. Sample: `cell(15,4,15) index[13173]=13150, vertCount=13101`; the same cell also repeats within one batch. Suspect the region-relative `coordVertMap` origin in `SurfaceNets.metal`. `EdgeServerClient.ValidateMeshBlock` now rejects these (they previously segfaulted PhysX on a bake thread); the **server-side cause is still unfixed**.
+- **Verified spec table** — every architecture number with its source file — is in `../../Submissions/Draft_Chapters/08_VERIFIED_SPECS.md`. Prefer it over `docs/01–14`, which are stale in places (e.g. doc 14 says 7 dilation steps; the serialized value is 8).
 - Pending Editor wiring: attach `EnableInStandalone` to ChunkManager + `EnableInEdge` to EdgeServerClient/EdgeMesh; add the metric collectors to MetricsRoot; wire `Blaster.onFire` → `GameEventCollector.OnShotFired`.
 - Studies designed, not run: Study 1 dual-headset rig (`../docs/10-rig-setup.md`), Study 2 N=12 user study (`../docs/11-user-study.md`, N needs supervisor sign-off).
 - Uncommitted in working trees: ProjectSettings (standalone naming), `XR Rig.prefab` tweaks, `MetalPipeline.swift` state fields.

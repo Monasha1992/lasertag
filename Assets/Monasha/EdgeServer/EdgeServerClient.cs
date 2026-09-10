@@ -104,7 +104,7 @@ namespace Monasha.EdgeServer
                  "instances you run on the Mac.")]
         [SerializeField] private int    maxServersToScan = 8;
 
-        [Tooltip("Seconds to wait for the server's 1-byte 'hello' that confirms the " +
+        [Tooltip("Milliseconds to wait for the server's 1-byte 'hello' that confirms the " +
                  "instance is free (not busy). On timeout the client treats the port " +
                  "as busy/unavailable and moves to the next one.")]
         [SerializeField] private int    handshakeTimeoutMs = 800;
@@ -164,6 +164,21 @@ namespace Monasha.EdgeServer
                  "Debug.Log on Quest IL2CPP has non-trivial cost that shows up in main-thread " +
                  "profiles when firing at 10 Hz.")]
         [SerializeField] private bool verboseLogging = false;
+
+        [Tooltip("Validate every mesh payload before uploading it — bounds-check the " +
+                 "declared vertex/index counts against the actual payload length, and " +
+                 "scan the index buffer for any index >= vertCount. REQUIRED for safety: " +
+                 "meshes are uploaded with DontValidateIndices and then cooked by " +
+                 "Physics.BakeMesh on a background thread, so a single bad index reads " +
+                 "past the vertex buffer inside PhysX and hard-crashes the process " +
+                 "(SIGSEGV on a Job.Worker thread, no managed exception, no CSV flush). " +
+                 "Costs one linear scan of the index buffer per mesh. Only turn this off " +
+                 "if you need absolutely unperturbed timings AND you trust the server.")]
+        [SerializeField] private bool validateMeshPayloads = true;
+
+        // Count of payloads rejected by the validator — surfaced in the boot log and
+        // as a metrics event so a silently-bad server run is visible in the data.
+        private int rejectedPayloadCount;
 
         [Header("Connection error UI")]
         [Tooltip("Optional GameObject (typically a world-space Canvas with a 'Server not connected' " +
@@ -313,8 +328,63 @@ namespace Monasha.EdgeServer
             new VertexAttributeDescriptor(VertexAttribute.Normal,   VertexAttributeFormat.Float32, 3),
         };
 
+        // ─────────────────────────────────────────────────────────────────────
+        // ValidateMeshBlock — guard for the DontValidateIndices upload path.
+        //
+        // Meshes are uploaded with index validation disabled and then cooked by
+        // Physics.BakeMesh on a Task.Run worker. PhysX dereferences indices
+        // directly, so an index >= vertCount reads past the end of the vertex
+        // buffer *on a background thread* — a hard SIGSEGV with no managed
+        // exception, no stack trace, and no chance for MetricsLogger to flush.
+        // A truncated payload does the same thing. Neither is recoverable after
+        // the fact, so both are checked here, before any upload.
+        //
+        // Returns true when the block is safe to upload.
+        // ─────────────────────────────────────────────────────────────────────
+        private bool ValidateMeshBlock(byte[] data, int length, int vertCount, int idxCount,
+                                       int vertexStart, int indexStart, string context)
+        {
+            string fault = null;
+
+            if (vertCount < 0 || idxCount < 0)
+                fault = $"negative counts (verts={vertCount} idx={idxCount})";
+            else if (idxCount % 3 != 0)
+                fault = $"index count {idxCount} is not a multiple of 3";
+            else if (vertexStart < 0 || indexStart < 0)
+                fault = $"negative offsets (vertStart={vertexStart} idxStart={indexStart})";
+            else if ((long)indexStart + (long)idxCount * 4 > length)
+                fault = $"payload truncated — needs {indexStart + (long)idxCount * 4} B, have {length} B " +
+                        $"(verts={vertCount} idx={idxCount})";
+
+            // Index range scan. This is the check that actually prevents the
+            // crash — everything above only catches malformed headers.
+            if (fault == null)
+            {
+                for (int i = 0, o = indexStart; i < idxCount; i++, o += 4)
+                {
+                    uint idx = BitConverter.ToUInt32(data, o);
+                    if (idx >= (uint)vertCount)
+                    {
+                        fault = $"index[{i}]={idx} out of range (vertCount={vertCount})";
+                        break;
+                    }
+                }
+            }
+
+            if (fault == null) return true;
+
+            rejectedPayloadCount++;
+            Debug.LogWarning($"[EdgeServerClient] REJECTED {context}: {fault}. " +
+                             $"Frame dropped (total rejected: {rejectedPayloadCount}). " +
+                             $"This would have crashed PhysX cooking — check the server's " +
+                             $"index generation.");
+            MetricsLogger.Instance?.LogEvent("mesh_payload_rejected",
+                                             $"context={context};reason={fault}");
+            return false;
+        }
+
         // Flags that skip every piece of per-upload validation Unity does by default.
-        // Safe here because the server already produces clean, consistent meshes.
+        // Safe ONLY because ValidateMeshBlock() bounds-checks every payload first.
         private const MeshUpdateFlags FastMeshFlags =
             MeshUpdateFlags.DontValidateIndices   |
             MeshUpdateFlags.DontResetBoneBounds   |
@@ -555,7 +625,6 @@ namespace Monasha.EdgeServer
             client = pendingClient;
             stream = pendingStream;
             connectedPort = port;
-            ConnectedPort = port;
 
             // Tag the metrics file with the port so each headset's CSV is identifiable.
             MetricsLogger.Instance?.SetFileTag($"port{port}");
@@ -633,7 +702,7 @@ namespace Monasha.EdgeServer
             {
                 try
                 {
-                    if (item.type == 0x03)      ApplyMeshData(item.buffer);
+                    if (item.type == 0x03)      ApplyMeshData(item.buffer, item.length);
                     else if (item.type == 0x04) ApplyChunkBatch(item.buffer, item.length);
                     else if (item.type == 0x02) ApplyVoxelData(item.buffer);
                 }
@@ -803,7 +872,7 @@ namespace Monasha.EdgeServer
         //   physics BVH every frame (which is CPU-heavy). Bullets can then hit the
         //   mesh via Physics.Raycast against the MeshCollider.
         // ─────────────────────────────────────────────────────────────────────
-        private void ApplyMeshData(byte[] data)
+        private void ApplyMeshData(byte[] data, int length)
         {
             waitingForMesh = false;
 
@@ -851,6 +920,13 @@ namespace Monasha.EdgeServer
             int indexBytes  = idxCount  * 4;           // 4 B per uint32 index
             int vertexStart = offset;                  // byte offset of first vertex in `data`
             int indexStart  = offset + vertexBytes;    // byte offset of first index in `data`
+
+            // Bounds-check before any upload — see ValidateMeshBlock. `length` is
+            // the real payload size; data.Length is the POOLED buffer size and can
+            // be larger, so it must not be used for this check.
+            if (validateMeshPayloads &&
+                !ValidateMeshBlock(data, length, vertCount, idxCount, vertexStart, indexStart, "0x03 mesh"))
+                return;
 
             // ── Apply to Unity Mesh (zero-parse path) ─────────────────────────
             // We declare the vertex layout once and push the raw server bytes
@@ -1031,6 +1107,20 @@ namespace Monasha.EdgeServer
             int batchVerts = 0, batchTris = 0;
             for (int i = 0; i < chunkCount; i++)
             {
+                // The 20-byte chunk header itself must be inside the payload —
+                // a bogus chunkCount would otherwise walk us off the end.
+                if (offset + 20 > length)
+                {
+                    rejectedPayloadCount++;
+                    Debug.LogWarning($"[EdgeServerClient] REJECTED 0x04 batch: chunk header {i} " +
+                                     $"runs past payload end ({offset + 20} > {length}); " +
+                                     $"declared chunkCount={chunkCount}. Dropping rest of batch " +
+                                     $"(total rejected: {rejectedPayloadCount}).");
+                    MetricsLogger.Instance?.LogEvent("mesh_payload_rejected",
+                                                     $"context=0x04 header;reason=truncated at chunk {i}");
+                    break;
+                }
+
                 int cx = BitConverter.ToInt32(data, offset); offset += 4;
                 int cy = BitConverter.ToInt32(data, offset); offset += 4;
                 int cz = BitConverter.ToInt32(data, offset); offset += 4;
@@ -1039,6 +1129,22 @@ namespace Monasha.EdgeServer
 
                 int vertexBytes = chunkVerts * 24;
                 int indexBytes  = chunkIdx * 4;
+
+                // Per-chunk bounds check. Indices here are chunk-LOCAL, so each
+                // chunk must be validated against its own vertCount — a chunk
+                // carrying globally-numbered indices is exactly the failure mode
+                // that crashes PhysX on the bake thread.
+                if (validateMeshPayloads &&
+                    !ValidateMeshBlock(data, length, chunkVerts, chunkIdx,
+                                       offset, offset + vertexBytes,
+                                       $"0x04 chunk[{i}] cell({cx},{cy},{cz})"))
+                {
+                    // Skip this chunk but keep parsing the rest of the batch —
+                    // offsets are self-describing, so one bad cell doesn't
+                    // invalidate the others.
+                    offset += vertexBytes + indexBytes;
+                    continue;
+                }
 
                 chunkStore.ApplyChunk(new Vector3Int(cx, cy, cz), data,
                     vertStart:  offset,               vertCount: chunkVerts,

@@ -3,6 +3,7 @@ using System.Collections;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using Anaglyph.XRTemplate;
 using UnityEngine;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,9 +50,20 @@ using UnityEngine;
 //     network_profile, build_sha
 //
 // FILE LOCATION:
-//   Application.persistentDataPath / metrics_[portNNNN_]<local-timestamp>.csv
+//   Application.persistentDataPath / metrics_<variant>_[portNNNN_]<local-timestamp>.csv
+//   <variant> is derived at StartSession() from the two build-time flags that
+//   already exist elsewhere (ArchitectureManager.IsEdge, StudyModeManager.
+//   IsUserStudy) — NOT re-read from scripting defines here, so it reflects
+//   whatever those components actually resolved to (define override or
+//   Inspector default in the Editor), rather than duplicating that logic:
+//     edge_us   = Edge build, USER_STUDY_BUILD
+//     edge      = Edge build, quantitative (rig)
+//     stand_us  = Standalone build, USER_STUDY_BUILD
+//     stand     = Standalone build, quantitative (rig)
+//   Filenames are self-documenting for which of the four APKs produced them —
+//   no separate note needed to tell the files apart later.
 //   (filename uses device LOCAL time; the per-row `timestamp` column is UTC epoch-ms)
-//   (edge builds include the connected server port, e.g. metrics_port9901_*.csv)
+//   (edge builds also include the connected server port, e.g. …_port9901_*.csv)
 //   On Quest: /sdcard/Android/data/<package>/files/metrics_*.csv
 //   Pull with:  adb pull /sdcard/Android/data/<package>/files/ ~/Desktop/
 // ─────────────────────────────────────────────────────────────────────────────
@@ -198,6 +210,22 @@ namespace Monasha.Metrics
             this.buildSha         = buildSha         ?? "";
         }
 
+        // Reads the two already-authoritative build flags (not re-derived from
+        // scripting defines here — ArchitectureManager/StudyModeManager already
+        // resolved define-vs-Inspector, this just reflects their answer) so the
+        // filename says which of the four APKs produced it: edge_us / edge /
+        // stand_us / stand.
+        private static string BuildVariantTag()
+        {
+            bool edge = ArchitectureManager.Instance != null
+                ? ArchitectureManager.Instance.IsEdge
+                : EnvironmentMapper.UseEdgeServer;
+            bool userStudy = StudyModeManager.IsUserStudy;
+
+            string arch = edge ? "edge" : "stand";
+            return userStudy ? arch + "_us" : arch;
+        }
+
         // ─────────────────────────────────────────────────────────────────────
         // StartSession — Open a new CSV file and write the header + meta row
         // ─────────────────────────────────────────────────────────────────────
@@ -213,8 +241,9 @@ namespace Monasha.Metrics
             // pulling files). The per-row `timestamp` column below stays UTC
             // epoch-ms so the Quest↔Mac join is unaffected.
             string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            string variant   = BuildVariantTag();
             string tagPart   = string.IsNullOrEmpty(fileTag) ? "" : fileTag + "_";
-            currentFilePath  = Path.Combine(Application.persistentDataPath, $"metrics_{tagPart}{timestamp}.csv");
+            currentFilePath  = Path.Combine(Application.persistentDataPath, $"metrics_{variant}_{tagPart}{timestamp}.csv");
 
             try
             {

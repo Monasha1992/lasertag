@@ -1007,7 +1007,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ea161e2d49f5148a3bc2434183e63edc, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.ArchitectureManager
-  mode: 0
+  mode: 1
   headsetId: quest_B
   environmentLabel: unknown
   buildSha: 
@@ -1332,6 +1332,8 @@ GameObject:
   - component: {fileID: 1881734022}
   - component: {fileID: 1881734023}
   - component: {fileID: 1881734024}
+  - component: {fileID: 1881734026}
+  - component: {fileID: 1881734027}
   m_Layer: 0
   m_Name: MetricsRoot
   m_TagString: Untagged
@@ -1437,6 +1439,47 @@ MonoBehaviour:
   onRunStopped:
     m_PersistentCalls:
       m_Calls: []
+--- !u!114 &1881734026
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1881734007}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3f78ceb6b7ddd4d0ea7f11151383c43b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.NetworkProfileController
+  profiles:
+  - good
+  - mid_rtt
+  - high_rtt
+  - bandwidth_cap_20mbps
+  nextButtonBinding: <XRController>{LeftHand}/secondaryButton
+  prevButtonBinding: <XRController>{LeftHand}/primaryButton
+  rotateSessionOnChange: 1
+--- !u!114 &1881734027
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1881734007}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bd64d85ad8505440aa1cc1b8fdda1b14, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Monasha.Metrics.EnvironmentLabelController
+  labels:
+  - cluttered_small
+  - kitchen
+  - hallway
+  - normal_apartment
+  - large_apartment
+  nextButtonBinding: <XRController>{RightHand}/primaryButton
+  prevButtonBinding: <XRController>{RightHand}/thumbstickClicked
+  rotateSessionOnChange: 1
 --- !u!1001 &3916737362139618993
 PrefabInstance:
   m_ObjectHideFlags: 0

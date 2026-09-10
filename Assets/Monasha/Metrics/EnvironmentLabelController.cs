@@ -1,18 +1,29 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
+using VariableObjects;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EnvironmentLabelController.cs — Cycle through preset environment labels
 //
 // WHAT THIS FILE DOES:
 //   Lets the researcher change the `environment` tag on the CSV's meta row
-//   WITHOUT removing the headset between rooms. Three ways to trigger:
+//   WITHOUT removing the headset between rooms. Ways to trigger:
 //
-//     - Public CycleNext() / CyclePrevious() methods — wire to a Quest
-//       controller button via Unity's UnityEvent / XR Input system, or call
-//       directly from another script.
-//     - Public SetLabel(string) — for explicit-name wiring (one button per
-//       label) or programmatic use.
-//     - Editor hotkey (F8 by default) — handy in Play mode without a headset.
+//     - Controller buttons, same pattern as NetworkProfileController. The rig
+//       researcher has no keyboard paired to the headset, so this is the one
+//       that matters on-device:
+//         Right A (primaryButton)      → CycleNext
+//         Right thumbstick click       → CyclePrevious (overshoot recovery)
+//       Both are free: the game's input actions bind only grip/trigger/pose,
+//       right B is MeasurementController's run-start, and left X/Y belong to
+//       NetworkProfileController.
+//     - Public CycleNext() / CyclePrevious() / SetLabel(string) — for
+//       UnityEvent wiring or programmatic use.
+//     - Keyboard F8 — Editor fallback only.
+//
+//   PROCEDURE per room: press Right A to advance the label (which rotates the
+//   CSV when rotateSessionOnChange is on, so the new file opens already tagged),
+//   THEN press Right B to start the recorded run.
 //
 //   Every label change pushes the new value into
 //   ArchitectureManager.Instance.EnvironmentLabel (which propagates to the
@@ -55,9 +66,34 @@ namespace Monasha.Metrics
             "outdoor"
         };
 
-        [Tooltip("Editor / keyboard-build hotkey to cycle to the next label. " +
-                 "Has no effect on headset builds without a keyboard attached.")]
-        [SerializeField] private KeyCode cycleHotkey = KeyCode.F8;
+        [Header("Controller trigger")]
+        [Tooltip("Right A. Free on this project — the game's input actions only " +
+                 "bind grip/trigger/pose, right B is MeasurementController's " +
+                 "run-start, and left X/Y are NetworkProfileController.")]
+        [SerializeField] private string nextButtonBinding = "<XRController>{RightHand}/primaryButton";
+
+        [Tooltip("Right thumbstick click — steps back if you overshoot. Clear this " +
+                 "field if the path doesn't resolve on your runtime; an unresolved " +
+                 "binding is simply ignored, it does not throw.")]
+        [SerializeField] private string prevButtonBinding = "<XRController>{RightHand}/thumbstickClicked";
+
+        [Header("UI readout (optional)")]
+        [Tooltip("StringObject the active label is pushed into, so a field on the " +
+                 "Settings panel shows which room is currently tagged — the rig " +
+                 "researcher can confirm the button press landed without pulling " +
+                 "logcat. If the field is editable, typing into it applies that " +
+                 "label (handy for an ad-hoc room name not in the preset list). " +
+                 "Leave empty to skip the UI entirely.")]
+        [SerializeField] private StringObject environmentLabelDisplay;
+
+        private InputAction nextAction;
+        private InputAction prevAction;
+
+        // Guards the StringObject round-trip: we write the label into the
+        // StringObject, which fires onChange, which would call back into
+        // SetLabel and rotate the CSV a second time. Set while we're the ones
+        // doing the writing.
+        private bool suppressDisplayCallback;
 
         [Tooltip("If true, EndSession() + StartSession() are called on every " +
                  "label change so each environment gets its own CSV file. " +
@@ -85,9 +121,53 @@ namespace Monasha.Metrics
             ApplyCurrentLabel(rotateSession: false);  // don't roll over the auto-start session
         }
 
-        private void Update()
+        // ─────────────────────────────────────────────────────────────────────
+        // Controller bindings — mirrors NetworkProfileController's pattern.
+        // The rig researcher has no keyboard on the headset, so the label MUST
+        // be reachable from a controller button; F8 stays as an Editor fallback.
+        // ─────────────────────────────────────────────────────────────────────
+        private void Awake()
         {
-            if (Input.GetKeyDown(cycleHotkey)) CycleNext();
+            nextAction = new InputAction("EnvironmentLabelNext", InputActionType.Button);
+            if (!string.IsNullOrEmpty(nextButtonBinding)) nextAction.AddBinding(nextButtonBinding);
+            nextAction.AddBinding("<Keyboard>/f8");
+            nextAction.performed += _ => CycleNext();
+
+            prevAction = new InputAction("EnvironmentLabelPrev", InputActionType.Button);
+            if (!string.IsNullOrEmpty(prevButtonBinding)) prevAction.AddBinding(prevButtonBinding);
+            prevAction.performed += _ => CyclePrevious();
+        }
+
+        private void OnEnable()
+        {
+            nextAction?.Enable();
+            prevAction?.Enable();
+
+            if (environmentLabelDisplay != null)
+                environmentLabelDisplay.onChange += OnDisplayEdited;
+        }
+
+        private void OnDisable()
+        {
+            nextAction?.Disable();
+            prevAction?.Disable();
+
+            if (environmentLabelDisplay != null)
+                environmentLabelDisplay.onChange -= OnDisplayEdited;
+        }
+
+        // Someone typed into the Settings-panel field — treat it as a label
+        // change. Ignored when we're the ones who just wrote the value.
+        private void OnDisplayEdited(string label)
+        {
+            if (suppressDisplayCallback) return;
+            SetLabel(label);
+        }
+
+        private void OnDestroy()
+        {
+            nextAction?.Dispose();
+            prevAction?.Dispose();
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -141,6 +221,15 @@ namespace Monasha.Metrics
         {
             var arch = ArchitectureManager.Instance;
             if (arch != null) arch.EnvironmentLabel = label;
+
+            // Mirror into the UI readout. Guarded so the resulting onChange
+            // doesn't bounce back through OnDisplayEdited and rotate again.
+            if (environmentLabelDisplay != null)
+            {
+                suppressDisplayCallback = true;
+                environmentLabelDisplay.Value = label;
+                suppressDisplayCallback = false;
+            }
 
             // Mark the transition in the current CSV regardless of whether we
             // rotate sessions — useful if the researcher decides to slice
